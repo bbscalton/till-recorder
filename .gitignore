@@ -11,4 +11,7 @@ android/local.properties
 android/**/build/
 android/.idea/
 *.iml
+windows/bin/
+windows/obj/
+windows/publish/
 .DS_Store
