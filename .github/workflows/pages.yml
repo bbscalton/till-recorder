@@ -1,6 +1,7 @@
 name: Publish viewer
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
