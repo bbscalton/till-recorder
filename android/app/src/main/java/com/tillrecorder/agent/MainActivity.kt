@@ -105,6 +105,9 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         binding.root.post(ticker)
+        if (store.watchEnabled && store.isConfigured && TillAccessibilityService.enabled(this)) {
+            RecordingService.startBuiltIn(this)
+        }
         if (RecordingFiles.pendingCount(this) > 0) UploadWorker.enqueue(this)
     }
 

@@ -384,7 +384,7 @@ class LiveFeed {
       await this.pull();
     } catch (error) {
       this.note("Waiting for live video from the register.");
-      this.reset();
+      if (!this.open) this.reset();
     } finally {
       this.busy = false;
     }
@@ -405,12 +405,16 @@ class LiveFeed {
       await this.attach(head.codec || "avc1.42E01E");
     }
     let from = this.seq + 1;
-    if (head.seq - from > 4) from = Math.max(1, head.seq - 1);
+    if (head.seq - from > 30) from = Math.max(1, head.seq - 12);
     for (let seq = from; seq <= head.seq; seq += 1) {
       const bytes = await this.fetchChunk(seq === 0 ? "init" : String(seq));
       if (!bytes) break;
-      await this.append(bytes);
-      this.seq = seq;
+      try {
+        await this.append(bytes);
+        this.seq = seq;
+      } catch (error) {
+        break;
+      }
     }
     this.edge();
     this.note("");
@@ -471,15 +475,22 @@ class LiveFeed {
   }
 
   edge() {
-    if (!this.video.buffered.length) return;
-    const end = this.video.buffered.end(this.video.buffered.length - 1);
-    if (end - this.video.currentTime > 1.5) this.video.currentTime = Math.max(0, end - 0.4);
-    if (this.video.paused) this.video.play().catch(() => {});
+    const video = this.video;
+    if (!video.buffered.length) return;
+    const end = video.buffered.end(video.buffered.length - 1);
+    const start = video.buffered.start(video.buffered.length - 1);
+    const lag = end - video.currentTime;
+    if (video.currentTime < start || video.currentTime > end) {
+      video.currentTime = start;
+    } else if (lag > 8) {
+      video.currentTime = Math.max(start, end - 2);
+    }
+    if (video.paused) video.play().catch(() => {});
     const source = this.source;
-    if (source && !source.updating && this.video.buffered.length) {
-      const start = this.video.buffered.start(0);
-      if (end - start > 20) {
-        try { source.remove(start, end - 8); } catch (error) {}
+    if (source && !source.updating && video.buffered.length) {
+      const oldest = video.buffered.start(0);
+      if (end - oldest > 20 && video.currentTime - oldest > 8) {
+        try { source.remove(oldest, video.currentTime - 4); } catch (error) {}
       }
     }
   }

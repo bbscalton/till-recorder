@@ -186,7 +186,11 @@ object ShopClient {
             conn.setFixedLengthStreamingMode(bytes.size)
             conn.outputStream.use { it.write(bytes) }
             val code = conn.responseCode
-            if (code !in 200..299) Log.w(TAG, "Live video upload failed $code")
+            if (code in 200..299) {
+                Log.i(TAG, "Live $kind #$sequence ${bytes.size} bytes HTTP $code")
+            } else {
+                Log.w(TAG, "Live $kind #$sequence ${bytes.size} bytes HTTP $code")
+            }
             conn.disconnect()
         } catch (error: Exception) {
             Log.w(TAG, "Live video upload failed", error)

@@ -211,7 +211,17 @@ class CameraVideo(
         request.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
         fpsRange()?.let { request.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
         captureSession.setRepeatingRequest(request.build(), null, handler)
+        handler.removeCallbacks(sync)
+        handler.post(sync)
         if (!includeMotion) handler.post(keepAlive)
+    }
+
+    private val sync = object : Runnable {
+        override fun run() {
+            if (!open) return
+            encoder?.requestSync()
+            handler.postDelayed(this, 60)
+        }
     }
 
     private val keepAlive = object : Runnable {
@@ -251,6 +261,7 @@ class CameraVideo(
 
     private fun closeAll() {
         handler.removeCallbacks(keepAlive)
+        handler.removeCallbacks(sync)
         try { session?.close() } catch (_: Exception) {}
         session = null
         try { device?.close() } catch (_: Exception) {}

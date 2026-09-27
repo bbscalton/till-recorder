@@ -65,11 +65,11 @@ class SurfaceEncoder(
             override fun onInputBufferAvailable(codec: MediaCodec, index: Int) = Unit
 
             override fun onOutputFormatChanged(codec: MediaCodec, format: MediaFormat) {
-                val chunk = synchronized(lock) {
+                val chunks = synchronized(lock) {
                     outputFormat = format
-                    initFrom(format)
+                    listOfNotNull(initFrom(format))
                 }
-                if (chunk != null) onChunk(chunk.seq, chunk.bytes, chunk.codec)
+                for (chunk in chunks) onChunk(chunk.seq, chunk.bytes, chunk.codec)
             }
 
             override fun onError(codec: MediaCodec, error: MediaCodec.CodecException) {
@@ -77,10 +77,10 @@ class SurfaceEncoder(
             }
 
             override fun onOutputBufferAvailable(codec: MediaCodec, index: Int, info: MediaCodec.BufferInfo) {
-                val chunk = try {
+                val chunks = try {
                     val buffer = codec.getOutputBuffer(index)
                     if (buffer == null || info.size <= 0) {
-                        null
+                        emptyList()
                     } else {
                         val bytes = ByteArray(info.size)
                         buffer.position(info.offset)
@@ -90,17 +90,21 @@ class SurfaceEncoder(
                     }
                 } catch (error: Exception) {
                     Log.w(TAG, "Video frame failed", error)
-                    null
+                    emptyList()
                 }
                 codec.releaseOutputBuffer(index, false)
-                if (chunk != null) onChunk(chunk.seq, chunk.bytes, chunk.codec)
+                for (chunk in chunks) onChunk(chunk.seq, chunk.bytes, chunk.codec)
             }
         }
         val codec = try {
-            buildCodec(handler, callback, true)
+            buildCodec(handler, callback, withProfile = true, allKeyframes = true)
         } catch (error: Exception) {
-            Log.w(TAG, "Baseline profile was not accepted", error)
-            buildCodec(handler, callback, false)
+            Log.w(TAG, "All-keyframe encoder was not accepted", error)
+            try {
+                buildCodec(handler, callback, withProfile = false, allKeyframes = true)
+            } catch (again: Exception) {
+                buildCodec(handler, callback, withProfile = false, allKeyframes = false)
+            }
         }
         videoCodec = codec
         val surface = codec.createInputSurface()
@@ -111,8 +115,19 @@ class SurfaceEncoder(
         return surface
     }
 
+    /** Asks the encoder for an IDR so the next frame can start a playable fragment. */
+    fun requestSync() {
+        try {
+            videoCodec?.setParameters(Bundle().apply {
+                putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0)
+            })
+        } catch (_: Exception) {
+        }
+    }
+
     /** Draws one captured frame onto the encoder. Same surface path as a clip writer. */
     fun draw(bitmap: Bitmap) {
+        requestSync()
         val target = inputSurface ?: return
         if (released) return
         val canvas: Canvas = target.lockHardwareCanvas()
@@ -187,11 +202,16 @@ class SurfaceEncoder(
         thread.quitSafely()
     }
 
-    private fun buildCodec(handler: Handler, callback: MediaCodec.Callback, withProfile: Boolean): MediaCodec {
+    private fun buildCodec(
+        handler: Handler,
+        callback: MediaCodec.Callback,
+        withProfile: Boolean,
+        allKeyframes: Boolean,
+    ): MediaCodec {
         val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
         codec.setCallback(callback, handler)
         try {
-            codec.configure(videoFormat(withProfile), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            codec.configure(videoFormat(withProfile, allKeyframes), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         } catch (error: Exception) {
             codec.release()
             throw error
@@ -199,12 +219,12 @@ class SurfaceEncoder(
         return codec
     }
 
-    private fun videoFormat(withProfile: Boolean): MediaFormat {
+    private fun videoFormat(withProfile: Boolean, allKeyframes: Boolean): MediaFormat {
         return MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, bitRate)
             setInteger(MediaFormat.KEY_FRAME_RATE, RecorderConfig.FRAME_RATE)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, if (allKeyframes) 0 else 1)
             setInteger(
                 MediaFormat.KEY_BITRATE_MODE,
                 MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR
@@ -301,30 +321,30 @@ class SurfaceEncoder(
         }
     }
 
-    private fun ingest(bytes: ByteArray, info: MediaCodec.BufferInfo): Chunk? {
-        if (released) return null
+    private fun ingest(bytes: ByteArray, info: MediaCodec.BufferInfo): List<Chunk> {
+        if (released) return emptyList()
         if (info.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
-            if (initSent) return null
+            if (initSent) return emptyList()
             val sps = splitAnnexB(bytes).firstOrNull { it.isNotEmpty() && (it[0].toInt() and 0x1f) == 7 }
             val pps = splitAnnexB(bytes).firstOrNull { it.isNotEmpty() && (it[0].toInt() and 0x1f) == 8 }
-            if (sps == null || pps == null) return null
-            return emitInit(sps, pps)
+            if (sps == null || pps == null) return emptyList()
+            return listOfNotNull(emitInit(sps, pps))
         }
         val avcc = annexBToAvcc(bytes)
-        if (avcc.isEmpty() || !initSent) return null
+        if (avcc.isEmpty() || !initSent) return emptyList()
         noteEncodedRate()
         maybeRequestSync()
         val key = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
         val ticks = ticksFor(info.presentationTimeUs)
         maybeWriteVideo(bytes, info.presentationTimeUs, info.flags)
-        if (key && batch.isNotEmpty()) {
-            val flushed = flushBatch()
-            batch.add(Fmp4Muxer.Sample(avcc, true, ticks))
-            return flushed
-        }
+        val emitted = ArrayList<Chunk>(1)
         batch.add(Fmp4Muxer.Sample(avcc, key, ticks))
-        if (batch.size >= RecorderConfig.FRAME_RATE) return flushBatch()
-        return null
+        if (key && batch.size > 1 && batch[0].keyframe) {
+            val newest = batch.removeAt(batch.lastIndex)
+            flushBatch()?.let { emitted.add(it) }
+            batch.add(newest)
+        }
+        return emitted
     }
 
     private fun maybeWriteVideo(annexB: ByteArray, pts: Long, flags: Int) {
@@ -421,7 +441,7 @@ class SurfaceEncoder(
 
     private fun maybeRequestSync() {
         val now = SystemClock.elapsedRealtime()
-        if (lastSyncAt != 0L && now - lastSyncAt < 1_000) return
+        if (lastSyncAt != 0L && now - lastSyncAt < 100) return
         lastSyncAt = now
         try {
             videoCodec?.setParameters(Bundle().apply {
@@ -437,7 +457,8 @@ class SurfaceEncoder(
         encodedFrames += 1
         val elapsed = now - encodedAt
         if (elapsed < 5_000) return
-        Log.i(TAG, "Encoded ${width}x${height} %.1f fps".format(encodedFrames * 1000.0 / elapsed))
+        val fps = encodedFrames * 1000.0 / elapsed
+        Log.i(TAG, "Encoded ${width}x${height} %.1f fps, frame interval %.0f ms".format(fps, elapsed.toDouble() / encodedFrames))
         encodedFrames = 0
         encodedAt = now
     }

@@ -38,7 +38,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class RecordingService : Service() {
     private val handler = Handler(Looper.getMainLooper())
-    private val net = Executors.newSingleThreadExecutor()
+    private val net = Executors.newFixedThreadPool(4)
     private lateinit var store: SettingsStore
     private var running = false
     private val stopRequested = AtomicBoolean(false)
@@ -355,7 +355,8 @@ class RecordingService : Service() {
         screenFrames += 1
         val elapsed = now - screenFpsAt
         if (elapsed < 5_000) return
-        Log.i(TAG, "Screen capture %.1f fps".format(screenFrames * 1000.0 / elapsed))
+        val fps = screenFrames * 1000.0 / elapsed
+        Log.i(TAG, "Screen capture %.1f fps, frame interval %.0f ms".format(fps, elapsed.toDouble() / screenFrames))
         screenFrames = 0
         screenFpsAt = now
     }
@@ -726,11 +727,6 @@ class RecordingService : Service() {
     private fun onCameraJpeg(jpeg: ByteArray) {
         if (!cameraOn || !running || stopRequested.get()) return
         val now = System.currentTimeMillis()
-        if (now - lastCameraLiveAt >= RecorderConfig.LIVE_INTERVAL_MS) {
-            lastCameraLiveAt = now
-            val settings = store.current()
-            net.execute { ShopClient.uploadCamera(settings, jpeg) }
-        }
         val bitmap = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: return
         try {
             val luma = sampleLuma(bitmap)
