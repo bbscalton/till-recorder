@@ -31,6 +31,8 @@ input { width: 100%; padding: 10px 12px; background: var(--bg); border: 1px soli
 .card button { margin-top: 16px; width: 100%; background: var(--record); border: none; color: white; }
 .error { color: #ffb4a8; }
 .devices { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.pair-box { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 8px; text-align: center; }
+.pair-code { margin: 0 0 8px; font-size: 32px; letter-spacing: 0.12em; font-weight: 700; }
 .device { text-align: left; display: flex; flex-direction: column; }
 .device.selected { border-color: var(--footage); }
 .device.live small { color: var(--record); }

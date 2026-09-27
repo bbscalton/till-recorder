@@ -14,7 +14,7 @@
     <form id="loginForm" class="card">
       <p class="eyebrow">Watch</p>
       <h1>Open a register</h1>
-      <p class="lede">Sign in with the token from the tablet. The live picture shows the screen while someone is using it, and you can turn the front camera on so both show together. Playback shows the clips from when the screen was changing.</p>
+      <p class="lede">Sign in with your token. Pair a register with a code, then the tablet connects itself. The live picture shows the screen, and you can turn the front camera on so both show together.</p>
       <label for="token">Token</label>
       <input id="token" type="password" autocomplete="current-password" required>
       <p id="loginError" class="error" hidden></p>
@@ -25,6 +25,11 @@
     <aside>
       <p class="eyebrow">Registers</p>
       <h1>Today</h1>
+      <button id="pairButton" type="button">Pair a register</button>
+      <div id="pairBox" class="pair-box" hidden>
+        <p id="pairCode" class="pair-code"></p>
+        <p id="pairStatus" class="hint">Enter this code in Till Recorder on the tablet.</p>
+      </div>
       <div id="deviceList" class="devices"></div>
       <label for="day">Day</label>
       <input id="day" type="date">

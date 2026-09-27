@@ -20,9 +20,16 @@ export default {
   },
 };
 
+const PAIR_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+
 async function handleApi(request, env, url) {
+  if (request.method === "POST" && url.pathname === "/api/pair") return claimPair(request, env);
   if (!authorized(request, env)) {
     return json({ error: "Sign in" }, 401);
+  }
+  if (request.method === "POST" && url.pathname === "/api/pair-codes") return createPairCode(env);
+  if (request.method === "GET" && url.pathname.startsWith("/api/pair-codes/")) {
+    return readPairCode(env, decodeURIComponent(url.pathname.slice("/api/pair-codes/".length)));
   }
   if (request.method === "GET" && url.pathname === "/api/check-token") return json({ ok: true });
   if (request.method === "POST" && url.pathname === "/api/login") return json({ ok: true });
@@ -59,6 +66,86 @@ function safeEqual(got, expected) {
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a[i] ^ b[i];
   return diff === 0;
+}
+
+function normalizePairCode(raw) {
+  const code = String(raw || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{6}$/.test(code) ? code : "";
+}
+
+function formatPairCode(code) {
+  return `${code.slice(0, 3)} ${code.slice(3)}`;
+}
+
+async function allowPairTry(env, request) {
+  const ip = (request.headers.get("CF-Connecting-IP") || "unknown").replace(/[^A-Za-z0-9.:_-]/g, "").slice(0, 80) || "unknown";
+  const key = `pair-tries/${ip}.json`;
+  const now = Date.now();
+  const existing = await env.RECORDINGS.get(key);
+  let record = existing ? await existing.json() : { count: 0, resetAt: now + 10 * 60 * 1000 };
+  if (now > Number(record.resetAt || 0)) record = { count: 0, resetAt: now + 10 * 60 * 1000 };
+  record.count += 1;
+  await env.RECORDINGS.put(key, JSON.stringify(record), {
+    httpMetadata: { contentType: "application/json" },
+  });
+  return record.count <= 20;
+}
+
+async function createPairCode(env) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const bytes = crypto.getRandomValues(new Uint8Array(6));
+    const code = [...bytes].map((value) => PAIR_ALPHABET[value % PAIR_ALPHABET.length]).join("");
+    const existing = await env.RECORDINGS.head(`pair/${code}.json`);
+    if (existing) continue;
+    const record = { expires: Date.now() + 10 * 60 * 1000, claimed: false };
+    await env.RECORDINGS.put(`pair/${code}.json`, JSON.stringify(record), {
+      httpMetadata: { contentType: "application/json" },
+    });
+    return json({ code, display: formatPairCode(code), expires: record.expires });
+  }
+  return json({ error: "Could not create a pair code" }, 500);
+}
+
+async function readPairCode(env, raw) {
+  const code = normalizePairCode(raw);
+  if (!code) return json({ error: "Not found" }, 404);
+  const object = await env.RECORDINGS.get(`pair/${code}.json`);
+  if (!object) return json({ error: "Not found" }, 404);
+  const pair = await object.json();
+  const expired = Date.now() > Number(pair.expires || 0);
+  return json({
+    claimed: Boolean(pair.claimed) && !expired,
+    expired,
+    name: pair.name || "",
+  });
+}
+
+async function claimPair(request, env) {
+  if (!(await allowPairTry(env, request))) {
+    return json({ error: "Too many tries. Wait a few minutes." }, 429);
+  }
+  const body = await request.json().catch(() => ({}));
+  const code = normalizePairCode(body.code || "");
+  const deviceId = body.device_id || "";
+  const name = String(body.device_name || "").replace(/[^\x20-\x7e]/g, "").trim().slice(0, 80);
+  if (!code || !DEVICE_ID.test(deviceId) || !name) {
+    return json({ error: "That pair code is not valid." }, 400);
+  }
+  if (!env.TILL_TOKEN) return json({ error: "Recorder is not ready" }, 500);
+  const object = await env.RECORDINGS.get(`pair/${code}.json`);
+  if (!object) return json({ error: "That pair code is not valid." }, 400);
+  const pair = await object.json();
+  if (pair.claimed || Date.now() > Number(pair.expires || 0)) {
+    return json({ error: "That pair code is not valid." }, 400);
+  }
+  pair.claimed = true;
+  pair.deviceId = deviceId;
+  pair.name = name;
+  await env.RECORDINGS.put(`pair/${code}.json`, JSON.stringify(pair), {
+    httpMetadata: { contentType: "application/json" },
+  });
+  await writeStatus(env, { id: deviceId, name, recording: false, lastSeen: Date.now() });
+  return json({ ok: true, token: env.TILL_TOKEN });
 }
 
 async function heartbeat(request, env) {

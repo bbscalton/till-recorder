@@ -47,6 +47,31 @@ fun sampleLuma(
     return samples
 }
 
+fun sampleLuma(bitmap: Bitmap, step: Int = 8): ByteArray {
+    val columns = bitmap.width / step
+    val rows = bitmap.height / step
+    if (columns <= 0 || rows <= 0) return ByteArray(0)
+    val samples = ByteArray(columns * rows)
+    var index = 0
+    for (row in 0 until rows) {
+        val y = row * step
+        for (column in 0 until columns) {
+            val pixel = bitmap.getPixel(column * step, y)
+            val red = (pixel shr 16) and 0xff
+            val green = (pixel shr 8) and 0xff
+            val blue = pixel and 0xff
+            samples[index++] = ((red * 3 + green * 6 + blue) / 10).toByte()
+        }
+    }
+    return samples
+}
+
+fun jpegBytes(bitmap: Bitmap, quality: Int = 55): ByteArray {
+    val output = ByteArrayOutputStream()
+    bitmap.compress(Bitmap.CompressFormat.JPEG, quality, output)
+    return output.toByteArray()
+}
+
 fun jpegBytes(image: Image, quality: Int = 55): ByteArray {
     val plane = image.planes[0]
     val bitmap = bitmapFromRgba(

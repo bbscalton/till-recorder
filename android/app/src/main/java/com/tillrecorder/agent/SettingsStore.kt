@@ -27,7 +27,7 @@ class SettingsStore(context: Context) {
         get() = prefs.getString(KEY_NAME, "").orEmpty()
 
     val baseUrl: String
-        get() = prefs.getString(KEY_URL, "").orEmpty()
+        get() = prefs.getString(KEY_URL, DEFAULT_URL).orEmpty().ifBlank { DEFAULT_URL }
 
     val token: String
         get() = prefs.getString(KEY_TOKEN, "").orEmpty()
@@ -36,6 +36,12 @@ class SettingsStore(context: Context) {
         get() = prefs.getBoolean(KEY_REMIND, true)
         set(value) {
             prefs.edit().putBoolean(KEY_REMIND, value).apply()
+        }
+
+    var watchEnabled: Boolean
+        get() = prefs.getBoolean(KEY_WATCH, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_WATCH, value).apply()
         }
 
     var uploadError: String
@@ -78,6 +84,8 @@ class SettingsStore(context: Context) {
         private const val KEY_TOKEN = "token"
         private const val KEY_REMIND = "remind"
         private const val KEY_ERROR = "upload_error"
+        private const val KEY_WATCH = "watch_enabled"
+        const val DEFAULT_URL = "https://till-recorder.neuereatec.workers.dev"
 
         fun normalizeBaseUrl(raw: String): String? {
             val trimmed = raw.trim().trimEnd('/')

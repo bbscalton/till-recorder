@@ -13,6 +13,10 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
         val store = SettingsStore(context)
+        if (store.watchEnabled && store.isConfigured && TillAccessibilityService.enabled(context)) {
+            RecordingService.startBuiltIn(context)
+            return
+        }
         if (!store.remindAfterRestart || !store.isConfigured) return
         val manager = context.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

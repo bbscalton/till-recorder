@@ -19,6 +19,7 @@ let selectedId = "";
 let segments = [];
 let active = null;
 let playheadMs = null;
+let pairTimer = 0;
 
 function todayIso() {
   const now = new Date();
@@ -87,6 +88,32 @@ cameraToggle.addEventListener("click", async () => {
   } finally {
     cameraToggle.disabled = !selectedId;
   }
+});
+
+document.getElementById("pairButton").addEventListener("click", async () => {
+  const box = document.getElementById("pairBox");
+  const code = document.getElementById("pairCode");
+  const status = document.getElementById("pairStatus");
+  clearInterval(pairTimer);
+  const created = await api("/api/pair-codes", { method: "POST" });
+  code.textContent = created.display || created.code;
+  status.textContent = "Enter this code in Till Recorder on the tablet. It works for 10 minutes.";
+  box.hidden = false;
+  pairTimer = setInterval(async () => {
+    try {
+      const state = await api(`/api/pair-codes/${created.code}`);
+      if (state.claimed) {
+        clearInterval(pairTimer);
+        status.textContent = `${state.name || "Register"} is connected.`;
+        await refresh();
+      } else if (state.expired) {
+        clearInterval(pairTimer);
+        status.textContent = "That code expired. Pair again.";
+      }
+    } catch (error) {
+      if (error.message === "auth") clearInterval(pairTimer);
+    }
+  }, 2000);
 });
 
 dayInput.addEventListener("change", () => loadDay());

@@ -18,6 +18,33 @@ sealed class UploadResult {
 object ShopClient {
     private const val TAG = "TillRecorder"
 
+    fun claimPair(deviceId: String, deviceName: String, code: String): String? {
+        val base = SettingsStore.DEFAULT_URL
+        return try {
+            val body = JSONObject()
+                .put("device_id", deviceId)
+                .put("device_name", deviceName.replace("[\r\n\"]".toRegex(), "").take(80))
+                .put("code", code)
+                .toString()
+                .toByteArray(Charsets.UTF_8)
+            val conn = open(base, "/api/pair", "", "POST")
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            conn.setFixedLengthStreamingMode(body.size)
+            conn.outputStream.use { it.write(body) }
+            val status = conn.responseCode
+            val text = (if (status in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader()
+                ?.use { it.readText() }
+                .orEmpty()
+            conn.disconnect()
+            if (status !in 200..299) null else JSONObject(text).optString("token").ifBlank { null }
+        } catch (error: Exception) {
+            Log.w(TAG, "Pairing failed", error)
+            null
+        }
+    }
+
     fun checkToken(settings: ShopSettings): Boolean {
         val base = SettingsStore.normalizeBaseUrl(settings.baseUrl) ?: return false
         return try {
@@ -131,7 +158,7 @@ object ShopClient {
         conn.requestMethod = method
         conn.connectTimeout = 15_000
         conn.readTimeout = 120_000
-        conn.setRequestProperty("Authorization", "Bearer $token")
+        if (token.isNotBlank()) conn.setRequestProperty("Authorization", "Bearer $token")
         return conn
     }
 

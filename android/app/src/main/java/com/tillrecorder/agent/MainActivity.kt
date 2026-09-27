@@ -1,10 +1,12 @@
 package com.tillrecorder.agent
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
-import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
+import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -26,24 +28,14 @@ class MainActivity : AppCompatActivity() {
         val notificationsOk = Build.VERSION.SDK_INT < 33 ||
             hasPermission(Manifest.permission.POST_NOTIFICATIONS)
         if (audioOk && notificationsOk) {
-            launchCaptureConsent()
+            startWatching()
         } else {
-            showStatus("Allow the microphone and notifications, then start recording again.")
-        }
-    }
-
-    private val captureRequest = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val data = result.data
-        if (result.resultCode == RESULT_OK && data != null) {
-            RecordingService.start(this, result.resultCode, data)
-        } else {
-            showStatus("Screen capture was not allowed. Choose Entire screen to record the register.")
+            showStatus("Allow the microphone and notifications, then start watching again.")
         }
     }
 
     private var note: String? = null
+    private var repairing = false
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -58,8 +50,6 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         store = SettingsStore(this)
         binding.registerName.setText(store.deviceName)
-        binding.serverUrl.setText(store.baseUrl)
-        binding.token.setText(store.token)
         binding.remindRestart.isChecked = store.remindAfterRestart
         binding.recordButton.setOnClickListener {
             if (RecorderEvents.current.recording) {
@@ -68,7 +58,7 @@ class MainActivity : AppCompatActivity() {
                 startRecordingFlow()
             }
         }
-        binding.testButton.setOnClickListener { testConnection() }
+        binding.connectButton.setOnClickListener { connect() }
         render()
     }
 
@@ -84,70 +74,74 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
-        saveFields()
+        if (store.isConfigured) {
+            store.save(
+                binding.registerName.text?.toString().orEmpty().ifBlank { store.deviceName },
+                SettingsStore.DEFAULT_URL,
+                store.token,
+                binding.remindRestart.isChecked,
+            )
+        }
         super.onPause()
     }
 
     private fun startRecordingFlow() {
-        val settings = validatedSettings() ?: return
-        store.save(settings.deviceName, settings.baseUrl, settings.token, binding.remindRestart.isChecked)
+        if (!store.isConfigured) {
+            showStatus("Enter the pair code from the watch page first.")
+            return
+        }
+        store.save(
+            binding.registerName.text?.toString().orEmpty().ifBlank { store.deviceName },
+            SettingsStore.DEFAULT_URL,
+            store.token,
+            binding.remindRestart.isChecked,
+        )
+        if (Build.VERSION.SDK_INT < 30) {
+            showStatus("This tablet needs Android 11 or newer.")
+            return
+        }
         val missing = missingPermissions()
         if (missing.isEmpty()) {
-            launchCaptureConsent()
+            startWatching()
         } else {
             permissionRequest.launch(missing)
         }
     }
 
-    private fun testConnection() {
-        val settings = validatedSettings() ?: return
-        binding.testButton.isEnabled = false
-        lifecycleScope.launch {
-            val ok = withContext(Dispatchers.IO) { ShopClient.checkToken(settings) }
-            binding.testButton.isEnabled = true
-            showStatus(
-                if (ok) "Connected to Cloudflare."
-                else "Could not reach Cloudflare, or the token does not match."
-            )
+    private fun startWatching() {
+        if (!TillAccessibilityService.enabled(this)) {
+            showStatus("Turn on Till Recorder in Accessibility. You only do this once, then come back and tap Start.")
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            return
         }
+        RecordingService.startBuiltIn(this)
     }
 
-    private fun validatedSettings(): ShopSettings? {
-        saveFields()
-        val settings = store.current()
-        val normalized = SettingsStore.normalizeBaseUrl(settings.baseUrl)
-        if (settings.deviceName.isBlank()) {
+    private fun connect() {
+        val name = binding.registerName.text?.toString()?.trim().orEmpty()
+        val code = binding.pairCode.text?.toString().orEmpty()
+        if (name.isBlank()) {
             showStatus("Enter a name for this register.")
-            return null
+            return
         }
-        if (normalized == null) {
-            showStatus("Enter the Cloudflare address, like https://till-recorder.workers.dev")
-            return null
+        if (code.count { it.isLetterOrDigit() } < 6) {
+            showStatus("Enter the 6-character pair code from the watch page.")
+            return
         }
-        if (settings.token.isBlank()) {
-            showStatus("Enter the token from the recorder setup.")
-            return null
+        binding.connectButton.isEnabled = false
+        lifecycleScope.launch {
+            val token = withContext(Dispatchers.IO) { ShopClient.claimPair(store.deviceId, name, code) }
+            binding.connectButton.isEnabled = true
+            if (token.isNullOrBlank()) {
+                showStatus("That pair code did not work. Create a new one on the watch page.")
+            } else {
+                store.save(name, SettingsStore.DEFAULT_URL, token, binding.remindRestart.isChecked)
+                repairing = false
+                binding.pairCode.text = null
+                showStatus("Connected. Turn on Till Recorder in Accessibility once, then start watching.")
+                render()
+            }
         }
-        return settings.copy(baseUrl = normalized)
-    }
-
-    private fun saveFields() {
-        store.save(
-            name = binding.registerName.text?.toString().orEmpty(),
-            baseUrl = binding.serverUrl.text?.toString().orEmpty(),
-            token = binding.token.text?.toString().orEmpty(),
-            remind = binding.remindRestart.isChecked,
-        )
-    }
-
-    private fun launchCaptureConsent() {
-        val manager = getSystemService(MediaProjectionManager::class.java)
-        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            captureIntentForWholeScreen(manager)
-        } else {
-            manager.createScreenCaptureIntent()
-        }
-        captureRequest.launch(intent)
     }
 
     private fun missingPermissions(): Array<String> {
@@ -164,11 +158,12 @@ class MainActivity : AppCompatActivity() {
         val status = RecorderEvents.current
         val pending = RecordingFiles.pendingCount(this)
         val recording = status.recording
+        val paired = store.isConfigured && !repairing
         binding.recordButton.setText(if (recording) R.string.stop else R.string.start)
         binding.registerName.isEnabled = !recording
-        binding.serverUrl.isEnabled = !recording
-        binding.token.isEnabled = !recording
         binding.remindRestart.isEnabled = !recording
+        binding.pairLayout.visibility = if (paired) View.GONE else View.VISIBLE
+        binding.connectButton.visibility = if (paired) View.GONE else View.VISIBLE
         val error = store.uploadError
         if (recording) note = null
         binding.statusText.text = when {

@@ -6,19 +6,15 @@ Clips are stored in Cloudflare R2. The website is in `viewer/`. Open the home pa
 
 ## Install the app
 
-The APK to install on the tablet is:
+The APK to install on the tablet is the download on the website, or:
 
 `android/app/build/outputs/apk/debug/app-debug.apk`
 
-On the tablet, enter:
+On the watch page, press **Pair a register**. On the tablet, enter the register name and that code, then tap **Connect**.
 
-- Register name
-- Cloudflare address (printed when the recorder is deployed)
-- Token
+Turn on **Till Recorder** under Accessibility. You only do that once. If Android blocks it, open App info and allow restricted settings, then turn it on. Tap **Start watching**. Allow the microphone and the camera. Watching stays on after that, including after a restart. A notice stays on the tablet while it is watching.
 
-Tap **Test connection**, then **Arm this register**. When Android asks what to share, choose **Entire screen** and allow the microphone and the camera. Then open the point-of-sale app.
-
-A notice stays on the tablet while it is watching. Recording starts when the screen changes and stops about 20 seconds after the screen goes still.
+Recording starts when the screen changes and stops about 20 seconds after the screen goes still.
 
 ## Watch live or play a clip
 
