@@ -7,7 +7,9 @@ import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
-data class SegmentMeta(val startedAtMs: Long, val endedAtMs: Long)
+data class SegmentMeta(val startedAtMs: Long, val endedAtMs: Long, val kind: String = "screen")
+
+data class RemoteControl(val camera: Boolean, val locked: Boolean, val lockSeq: Int)
 
 sealed class UploadResult {
     data object Ok : UploadResult()
@@ -58,8 +60,8 @@ object ShopClient {
         }
     }
 
-    /** Returns whether the website wants the front camera on, or null if the check failed. */
-    fun heartbeat(settings: ShopSettings, recording: Boolean): Boolean? {
+    /** Camera and register-lock flags from the watch page, or null if the check failed. */
+    fun heartbeat(settings: ShopSettings, recording: Boolean): RemoteControl? {
         val base = SettingsStore.normalizeBaseUrl(settings.baseUrl) ?: return null
         if (settings.token.isBlank() || settings.deviceName.isBlank()) return null
         return try {
@@ -80,10 +82,42 @@ object ShopClient {
                 ?.use { it.readText() }
                 .orEmpty()
             conn.disconnect()
-            if (code !in 200..299) null else JSONObject(text).optBoolean("camera", false)
+            if (code !in 200..299) {
+                null
+            } else {
+                val json = JSONObject(text)
+                RemoteControl(
+                    camera = json.optBoolean("camera", false),
+                    locked = json.optBoolean("locked", false),
+                    lockSeq = json.optInt("lockSeq", 0),
+                )
+            }
         } catch (error: Exception) {
             Log.w(TAG, "Heartbeat failed", error)
             null
+        }
+    }
+
+    fun setLocked(settings: ShopSettings, locked: Boolean, lockSeq: Int?): Boolean {
+        val base = SettingsStore.normalizeBaseUrl(settings.baseUrl) ?: return false
+        if (settings.token.isBlank()) return false
+        return try {
+            val payload = JSONObject()
+                .put("device_id", settings.deviceId)
+                .put("locked", locked)
+            if (lockSeq != null) payload.put("lock_seq", lockSeq)
+            val body = payload.toString().toByteArray(Charsets.UTF_8)
+            val conn = open(base, "/api/lock", settings.token, "POST")
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            conn.setFixedLengthStreamingMode(body.size)
+            conn.outputStream.use { it.write(body) }
+            val code = conn.responseCode
+            conn.disconnect()
+            code in 200..299
+        } catch (error: Exception) {
+            Log.w(TAG, "Lock update failed", error)
+            false
         }
     }
 
@@ -99,6 +133,7 @@ object ShopClient {
             "ended_at_ms" to meta.endedAtMs.toString(),
             "local_day" to java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
                 .format(java.util.Date(meta.startedAtMs)),
+            "kind" to if (meta.kind == "camera") "camera" else "screen",
         )
         return try {
             val conn = open(base, "/api/segments", settings.token, "POST")
@@ -133,6 +168,29 @@ object ShopClient {
 
     fun uploadLive(settings: ShopSettings, jpeg: ByteArray) {
         uploadJpeg(settings, jpeg, "/api/live")
+    }
+
+    fun uploadStream(settings: ShopSettings, kind: String, sequence: Int, bytes: ByteArray, codec: String) {
+        val base = SettingsStore.normalizeBaseUrl(settings.baseUrl) ?: return
+        if (settings.token.isBlank() || bytes.isEmpty()) return
+        try {
+            val conn = open(base, "/api/stream", settings.token, "POST")
+            conn.connectTimeout = 8_000
+            conn.readTimeout = 8_000
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "video/mp4")
+            conn.setRequestProperty("X-Device-Id", settings.deviceId)
+            conn.setRequestProperty("X-Stream-Kind", kind)
+            conn.setRequestProperty("X-Stream-Seq", sequence.toString())
+            conn.setRequestProperty("X-Stream-Codec", codec.take(32))
+            conn.setFixedLengthStreamingMode(bytes.size)
+            conn.outputStream.use { it.write(bytes) }
+            val code = conn.responseCode
+            if (code !in 200..299) Log.w(TAG, "Live video upload failed $code")
+            conn.disconnect()
+        } catch (error: Exception) {
+            Log.w(TAG, "Live video upload failed", error)
+        }
     }
 
     private fun uploadJpeg(settings: ShopSettings, jpeg: ByteArray, path: String) {

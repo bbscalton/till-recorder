@@ -3,10 +3,13 @@ package com.tillrecorder.agent
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.view.View
+import android.view.inputmethod.EditorInfo
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -19,6 +22,7 @@ import kotlinx.coroutines.withContext
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var store: SettingsStore
+    private var unlocked = false
 
     private val permissionRequest = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -49,17 +53,53 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         store = SettingsStore(this)
+        unlocked = savedInstanceState?.getBoolean(STATE_UNLOCKED) == true
         binding.registerName.setText(store.deviceName)
         binding.remindRestart.isChecked = store.remindAfterRestart
         binding.recordButton.setOnClickListener {
             if (RecorderEvents.current.recording) {
+                if (!store.hasPin || !unlocked) {
+                    showStatus(getString(R.string.pin_required_stop))
+                    render()
+                    return@setOnClickListener
+                }
                 RecordingService.stop(this)
             } else {
                 startRecordingFlow()
             }
         }
         binding.connectButton.setOnClickListener { connect() }
+        binding.unlockButton.setOnClickListener { unlock() }
+        binding.pinEntry.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                unlock()
+                true
+            } else {
+                false
+            }
+        }
+        binding.savePinButton.setOnClickListener { savePin() }
+        binding.confirmPin.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                savePin()
+                true
+            } else {
+                false
+            }
+        }
         render()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(STATE_UNLOCKED, unlocked)
+    }
+
+    override fun onRestart() {
+        super.onRestart()
+        unlocked = false
+        binding.pinEntry.text = null
+        binding.pinError.visibility = View.GONE
     }
 
     override fun onStart() {
@@ -74,7 +114,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
-        if (store.isConfigured) {
+        if (store.isConfigured && !controlsLocked()) {
             store.save(
                 binding.registerName.text?.toString().orEmpty().ifBlank { store.deviceName },
                 SettingsStore.DEFAULT_URL,
@@ -86,8 +126,14 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startRecordingFlow() {
+        if (controlsLocked()) return
         if (!store.isConfigured) {
             showStatus("Enter the pair code from the watch page first.")
+            return
+        }
+        if (!store.hasPin) {
+            showStatus(getString(R.string.pin_required_stop))
+            render()
             return
         }
         store.save(
@@ -115,9 +161,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
         RecordingService.startBuiltIn(this)
+        askToStayAwake()
     }
 
     private fun connect() {
+        if (controlsLocked()) return
         val name = binding.registerName.text?.toString()?.trim().orEmpty()
         val code = binding.pairCode.text?.toString().orEmpty()
         if (name.isBlank()) {
@@ -138,9 +186,61 @@ class MainActivity : AppCompatActivity() {
                 store.save(name, SettingsStore.DEFAULT_URL, token, binding.remindRestart.isChecked)
                 repairing = false
                 binding.pairCode.text = null
-                showStatus("Connected. Turn on Till Recorder in Accessibility once, then start watching.")
+                showStatus("Connected. Set a PIN, then turn on Till Recorder in Accessibility once.")
                 render()
             }
+        }
+    }
+
+    private fun savePin() {
+        val pin = binding.newPin.text?.toString().orEmpty()
+        val confirm = binding.confirmPin.text?.toString().orEmpty()
+        when {
+            !PinLock.acceptable(pin) -> showPinSetupError(getString(R.string.pin_length))
+            pin != confirm -> showPinSetupError(getString(R.string.pin_mismatch))
+            !store.setPin(pin) -> showPinSetupError(getString(R.string.pin_length))
+            else -> {
+                unlocked = true
+                binding.newPin.text = null
+                binding.confirmPin.text = null
+                binding.pinSetupError.visibility = View.GONE
+                showStatus(getString(R.string.pin_saved))
+                askToStayAwake()
+                render()
+            }
+        }
+    }
+
+    private fun unlock() {
+        val pin = binding.pinEntry.text?.toString().orEmpty()
+        if (store.checkPin(pin)) {
+            unlocked = true
+            binding.pinEntry.text = null
+            binding.pinError.visibility = View.GONE
+            render()
+        } else {
+            binding.pinError.setText(R.string.pin_wrong)
+            binding.pinError.visibility = View.VISIBLE
+        }
+    }
+
+    private fun controlsLocked(): Boolean {
+        val paired = store.isConfigured && !repairing
+        return paired && (!store.hasPin || !unlocked)
+    }
+
+    private fun askToStayAwake() {
+        if (Build.VERSION.SDK_INT < 23) return
+        val power = getSystemService(PowerManager::class.java) ?: return
+        if (power.isIgnoringBatteryOptimizations(packageName)) return
+        try {
+            startActivity(
+                Intent(
+                    Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName")
+                )
+            )
+        } catch (_: Exception) {
         }
     }
 
@@ -159,17 +259,25 @@ class MainActivity : AppCompatActivity() {
         val pending = RecordingFiles.pendingCount(this)
         val recording = status.recording
         val paired = store.isConfigured && !repairing
+        val needsPin = paired && !store.hasPin
+        val locked = paired && store.hasPin && !unlocked
         binding.recordButton.setText(if (recording) R.string.stop else R.string.start)
         binding.registerName.isEnabled = !recording
         binding.remindRestart.isEnabled = !recording
         binding.pairLayout.visibility = if (paired) View.GONE else View.VISIBLE
         binding.connectButton.visibility = if (paired) View.GONE else View.VISIBLE
+        binding.lockPanel.visibility = if (locked) View.VISIBLE else View.GONE
+        binding.pinSetupPanel.visibility = if (needsPin) View.VISIBLE else View.GONE
+        binding.controlsPanel.visibility = if (locked || needsPin) View.GONE else View.VISIBLE
+        if (locked) {
+            binding.lockStatus.setText(if (recording) R.string.watching_locked else R.string.stopped_locked)
+        }
         val error = store.uploadError
         if (recording) note = null
         binding.statusText.text = when {
+            error.isNotBlank() -> error
             recording -> status.detail
             note != null -> note
-            error.isNotBlank() -> error
             status.detail.isNotBlank() -> status.detail
             else -> getString(R.string.status_idle)
         }
@@ -183,5 +291,14 @@ class MainActivity : AppCompatActivity() {
     private fun showStatus(message: String) {
         note = message
         binding.statusText.text = message
+    }
+
+    private fun showPinSetupError(message: String) {
+        binding.pinSetupError.text = message
+        binding.pinSetupError.visibility = View.VISIBLE
+    }
+
+    companion object {
+        private const val STATE_UNLOCKED = "unlocked"
     }
 }

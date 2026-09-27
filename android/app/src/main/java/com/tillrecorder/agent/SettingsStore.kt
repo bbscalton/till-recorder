@@ -44,6 +44,30 @@ class SettingsStore(context: Context) {
             prefs.edit().putBoolean(KEY_WATCH, value).apply()
         }
 
+    val hasPin: Boolean
+        get() {
+            val salt = PinLock.parseHex(prefs.getString(KEY_PIN_SALT, "").orEmpty())
+            val hash = PinLock.parseHex(prefs.getString(KEY_PIN_HASH, "").orEmpty())
+            return salt != null && hash != null && salt.isNotEmpty() && hash.size == 32
+        }
+
+    fun setPin(pin: String): Boolean {
+        if (!PinLock.acceptable(pin)) return false
+        val salt = PinLock.newSalt()
+        val hash = PinLock.hash(salt, pin)
+        prefs.edit()
+            .putString(KEY_PIN_SALT, PinLock.hex(salt))
+            .putString(KEY_PIN_HASH, PinLock.hex(hash))
+            .apply()
+        return true
+    }
+
+    fun checkPin(pin: String): Boolean {
+        val salt = PinLock.parseHex(prefs.getString(KEY_PIN_SALT, "").orEmpty()) ?: return false
+        val hash = PinLock.parseHex(prefs.getString(KEY_PIN_HASH, "").orEmpty()) ?: return false
+        return PinLock.matches(salt, hash, pin)
+    }
+
     var uploadError: String
         get() = prefs.getString(KEY_ERROR, "").orEmpty()
         set(value) {
@@ -85,6 +109,8 @@ class SettingsStore(context: Context) {
         private const val KEY_REMIND = "remind"
         private const val KEY_ERROR = "upload_error"
         private const val KEY_WATCH = "watch_enabled"
+        private const val KEY_PIN_SALT = "pin_salt"
+        private const val KEY_PIN_HASH = "pin_hash"
         const val DEFAULT_URL = "https://till-recorder.neuereatec.workers.dev"
 
         fun normalizeBaseUrl(raw: String): String? {

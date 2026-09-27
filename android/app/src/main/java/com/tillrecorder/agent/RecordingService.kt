@@ -1,6 +1,7 @@
 package com.tillrecorder.agent
 
 import android.app.Activity
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -10,21 +11,19 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.ImageReader
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
-import android.graphics.PixelFormat
-import android.media.ImageReader
+import android.graphics.BitmapFactory
 import android.media.MediaRecorder
-import android.media.projection.MediaProjection
-import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
@@ -41,8 +40,6 @@ class RecordingService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val net = Executors.newSingleThreadExecutor()
     private lateinit var store: SettingsStore
-    private var projection: MediaProjection? = null
-    private var systemStoppedProjection = false
     private var running = false
     private val stopRequested = AtomicBoolean(false)
     private var active: Active? = null
@@ -50,13 +47,25 @@ class RecordingService : Service() {
     private val watchThread = HandlerThread("till-watch")
     private var watchHandler: Handler? = null
     private var reader: ImageReader? = null
-    private var watchDisplay: VirtualDisplay? = null
     private var previousLuma: ByteArray? = null
+    private var previousCameraLuma: ByteArray? = null
+    private var lastScreenMotionAt = 0L
+    private var lastCameraMotionAt = 0L
+    private var lastCameraLiveAt = 0L
+    private var cameraFrameWidth = 0
+    private var cameraFrameHeight = 0
+    @Volatile private var clipKind = "screen"
     @Volatile private var lastMotionAt = 0L
     private var lastSampleAt = 0L
     private var lastLiveAt = 0L
     private var segmentBusy = false
     private var frontCamera: FrontCamera? = null
+    private var screenEncoder: SurfaceEncoder? = null
+    private var cameraVideo: CameraVideo? = null
+    private var screenClip: Active? = null
+    private var cameraClip: Active? = null
+    private var screenFrames = 0
+    private var screenFpsAt = 0L
     private var cameraOn = false
     private var cameraPermissionNoted = false
     private var cameraWake: PowerManager.WakeLock? = null
@@ -69,20 +78,21 @@ class RecordingService : Service() {
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action != Intent.ACTION_SCREEN_OFF) return
-            lastMotionAt = 0L
-            previousLuma = null
-            handler.post {
-                if (active != null) endSegment(continueRecording = false)
-                publish("Screen is off. Waiting until the register is used.")
+            when (intent?.action) {
+                Intent.ACTION_SCREEN_ON -> if (RegisterLock.isEngaged()) {
+                    RegisterLockActivity.show(this@RecordingService)
+                }
+                Intent.ACTION_SCREEN_OFF -> {
+                    lastMotionAt = 0L
+                    lastScreenMotionAt = 0L
+                    previousLuma = null
+                    handler.post {
+                        if (active != null) endSegment(continueRecording = false)
+                        endEncoder("screen")
+                        publish("Screen is off. Waiting until the register is used.")
+                    }
+                }
             }
-        }
-    }
-
-    private val projectionCallback = object : MediaProjection.Callback() {
-        override fun onStop() {
-            systemStoppedProjection = true
-            requestStop("Recording stopped from the tablet's recording notice.")
         }
     }
 
@@ -108,10 +118,18 @@ class RecordingService : Service() {
         override fun run() {
             if (!running || stopRequested.get()) return
             val settings = store.current()
-            val capturing = active != null
+            val capturing = active != null || screenClip != null || cameraClip != null
             net.execute {
-                val wanted = ShopClient.heartbeat(settings, capturing)
-                if (wanted != null) handler.post { applyCamera(wanted) }
+                val control = ShopClient.heartbeat(settings, capturing)
+                if (control != null) {
+                    if (RegisterLock.shouldPushClear()) {
+                        ShopClient.setLocked(settings, locked = false, lockSeq = RegisterLock.pendingClearSeq())
+                    }
+                    handler.post {
+                        applyCamera(control.camera)
+                        applyRemoteLock(control)
+                    }
+                }
             }
             handler.postDelayed(this, 5_000)
         }
@@ -123,7 +141,7 @@ class RecordingService : Service() {
             val pending = RecordingFiles.pendingCount(this@RecordingService)
             if (pending > 0 && System.currentTimeMillis() < flushUntil) {
                 UploadWorker.enqueue(this@RecordingService)
-                notify(notification("Sending the last clips to Cloudflare"))
+                notify(notification())
                 handler.postDelayed(this, 3_000)
             } else {
                 teardown()
@@ -138,7 +156,10 @@ class RecordingService : Service() {
         store = SettingsStore(this)
         watchThread.start()
         watchHandler = Handler(watchThread.looper)
-        val screenFilter = IntentFilter(Intent.ACTION_SCREEN_OFF)
+        val screenFilter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+        }
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(screenReceiver, screenFilter, RECEIVER_NOT_EXPORTED)
         } else {
@@ -146,13 +167,18 @@ class RecordingService : Service() {
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(
-                NotificationChannel(
-                    CHANNEL,
-                    getString(R.string.notif_channel),
-                    NotificationManager.IMPORTANCE_LOW
-                )
+            manager.deleteNotificationChannel(LEGACY_CHANNEL)
+            val channel = NotificationChannel(
+                CHANNEL,
+                getString(R.string.notif_channel),
+                NotificationManager.IMPORTANCE_LOW
             )
+            channel.setSound(null, null)
+            channel.enableVibration(false)
+            channel.enableLights(false)
+            channel.setShowBadge(false)
+            channel.lockscreenVisibility = Notification.VISIBILITY_SECRET
+            manager.createNotificationChannel(channel)
         }
     }
 
@@ -160,74 +186,62 @@ class RecordingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_STOP -> requestStop("Watching stopped.")
-            ACTION_START -> startFrom(intent)
+            ACTION_STOP -> if (intent.getBooleanExtra(EXTRA_AUTHORIZED, false)) {
+                requestStop("Watching stopped.")
+            } else if (!running && store.watchEnabled) {
+                startBuiltIn()
+            } else if (!running) {
+                stopSelf()
+            }
             ACTION_START_BUILTIN -> startBuiltIn()
             else -> if (!running && store.watchEnabled) startBuiltIn() else if (!running) stopSelf()
         }
         return if (store.watchEnabled) START_STICKY else START_NOT_STICKY
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (shouldRestart()) scheduleRestart()
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
+        val restart = shouldRestart()
         handler.removeCallbacksAndMessages(null)
         running = false
         endSegment(continueRecording = false)
         releaseFront()
         releaseWatch()
-        releaseProjection()
         releaseWake()
         try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
         watchThread.quitSafely()
         net.shutdownNow()
+        if (restart) scheduleRestart()
         super.onDestroy()
     }
 
-    private fun startFrom(intent: Intent) {
-        if (running) return
-        handler.removeCallbacks(flush)
-        val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, Activity.RESULT_CANCELED)
-        @Suppress("DEPRECATION")
-        val data = intent.getParcelableExtra<Intent>(EXTRA_RESULT_DATA)
-        if (resultCode != Activity.RESULT_OK || data == null) {
-            stopSelf()
-            return
-        }
-        // The projection is only valid after this service is in the foreground.
-        startInForeground("Starting recording")
-        try {
-            val manager = getSystemService(MediaProjectionManager::class.java)
-            val created = manager.getMediaProjection(resultCode, data)
-            if (created == null) {
-                fail("The tablet did not allow screen capture.")
-                return
-            }
-            projection = created
-            systemStoppedProjection = false
-            created.registerCallback(projectionCallback, handler)
-            stopRequested.set(false)
-            running = true
-            publish("Watching. A clip starts when the screen changes.")
-            handler.post { startWatching() }
-            handler.post(command)
-            handler.postDelayed(beat, 60_000)
-        } catch (error: Exception) {
-            Log.e(TAG, "Could not start capture", error)
-            fail(error.message ?: "Could not start recording")
-        }
+    private fun shouldRestart(): Boolean {
+        if (!::store.isInitialized) return false
+        return running && builtIn && store.watchEnabled && !stopRequested.get()
     }
 
     private fun startBuiltIn() {
-        if (running) return
-        builtIn = true
-        store.watchEnabled = true
-        handler.removeCallbacks(flush)
-        stopRequested.set(false)
-        startInForeground("Watching. A clip starts when the screen changes.")
-        running = true
-        publish("Watching. A clip starts when the screen changes.")
-        handler.post(grab)
-        handler.post(command)
-        handler.postDelayed(beat, 60_000)
+        cancelRestart()
+        if (!running) {
+            builtIn = true
+            store.watchEnabled = true
+            handler.removeCallbacks(flush)
+            stopRequested.set(false)
+            startInForeground("Watching. A clip starts when the screen changes.")
+            running = true
+            publish("Watching. A clip starts when the screen changes.")
+            startScreenEncoder()
+            handler.post(grab)
+            handler.post(command)
+            handler.postDelayed(beat, 60_000)
+        } else if (screenEncoder == null) {
+            startScreenEncoder()
+            handler.post(grab)
+        }
     }
 
     private val grab = object : Runnable {
@@ -243,16 +257,21 @@ class RecordingService : Service() {
                 handler.postDelayed(this, 1_000)
                 return
             }
-            grabWarned = false
-            service.capture { bitmap ->
+            if (grabWarned) {
+                grabWarned = false
+                publish("Watching. A clip starts when the screen changes.")
+            }
+            service.capture { bitmap, errorCode ->
                 if (!running || stopRequested.get()) {
                     bitmap?.recycle()
                     return@capture
                 }
                 if (bitmap == null) {
-                    handler.postDelayed(again, 500)
+                    val delay = if (errorCode == 3) 40L else 200L
+                    handler.postDelayed(again, delay)
                     return@capture
                 }
+                handler.post(again)
                 watchHandler?.post {
                     try {
                         handleFrame(bitmap)
@@ -261,7 +280,6 @@ class RecordingService : Service() {
                     } finally {
                         if (!bitmap.isRecycled) bitmap.recycle()
                     }
-                    if (running && !stopRequested.get()) handler.postDelayed(again, 500)
                 }
             }
         }
@@ -284,97 +302,153 @@ class RecordingService : Service() {
                 frameHeight = bitmap.height
             }
             val now = System.currentTimeMillis()
-            if (now - lastSampleAt < 400) return
             lastSampleAt = now
+            screenEncoder?.draw(bitmap)
+            noteScreenRate(now)
             val luma = sampleLuma(bitmap)
             val previous = previousLuma
             previousLuma = luma
             val moved = previous != null && changedFraction(previous, luma) >= RecorderConfig.MOTION_FRACTION
-            if (moved) lastMotionAt = now
-            val activeNow = now - lastMotionAt < RecorderConfig.QUIET_MS
-            if (activeNow && now - lastLiveAt >= RecorderConfig.LIVE_INTERVAL_MS) {
-                lastLiveAt = now
-                val jpeg = jpegBytes(bitmap)
-                val settings = store.current()
-                net.execute { ShopClient.uploadLive(settings, jpeg) }
+            if (moved) {
+                lastScreenMotionAt = now
+                lastMotionAt = now
             }
-            activeWriter?.draw(bitmap)
-            handler.post { onMotion(activeNow) }
+            handler.post { considerClips() }
         } finally {
             if (bitmap !== source && !bitmap.isRecycled) bitmap.recycle()
         }
     }
 
-    private fun startWatching() {
-        if (!running || stopRequested.get()) return
-        val currentProjection = projection ?: return
-        releaseWatch()
-        val (width, height, dpi) = watchSize()
-        val imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-        reader = imageReader
-        imageReader.setOnImageAvailableListener({ source ->
-            val image = source.acquireLatestImage() ?: return@setOnImageAvailableListener
-            try {
-                val now = System.currentTimeMillis()
-                if (now - lastSampleAt >= 500) {
-                lastSampleAt = now
-                val luma = sampleLuma(image)
-                val previous = previousLuma
-                previousLuma = luma
-                val moved = previous != null &&
-                    changedFraction(previous, luma) >= RecorderConfig.MOTION_FRACTION
-                if (moved) lastMotionAt = now
-                val activeNow = now - lastMotionAt < RecorderConfig.QUIET_MS
-                val jpeg = if (activeNow && now - lastLiveAt >= RecorderConfig.LIVE_INTERVAL_MS) {
-                    lastLiveAt = now
-                    jpegBytes(image)
-                } else {
-                    null
-                }
-                if (jpeg != null) {
-                    val settings = store.current()
-                    net.execute { ShopClient.uploadLive(settings, jpeg) }
-                }
-                handler.post { onMotion(activeNow) }
-                }
-            } catch (error: Exception) {
-                Log.w(TAG, "Screen sample failed", error)
-            } finally {
-                image.close()
+    private fun startScreenEncoder() {
+        if (screenEncoder != null) return
+        val (width, height, _) = captureSize()
+        frameWidth = width
+        frameHeight = height
+        audioSession = ContextCompat.checkSelfPermission(
+            this,
+            android.Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+        startInForeground("Watching. A clip starts when the screen changes.")
+        try {
+            val encoder = SurfaceEncoder(width, height, RecorderConfig.VIDEO_BITRATE, 0, audioSession) { seq, bytes, codec ->
+                val settings = store.current()
+                net.execute { ShopClient.uploadStream(settings, "screen", seq, bytes, codec) }
             }
-        }, watchHandler)
-        watchDisplay = currentProjection.createVirtualDisplay(
-            "TillRecorderWatch",
-            width,
-            height,
-            dpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader.surface,
-            null,
-            null
-        )
+            encoder.start()
+            screenEncoder = encoder
+            Log.i(TAG, "Screen video ${width}x${height} target ${RecorderConfig.FRAME_RATE} fps")
+        } catch (error: Exception) {
+            Log.e(TAG, "Screen video did not start", error)
+            try { screenEncoder?.release() } catch (_: Exception) {}
+            screenEncoder = null
+            publish("Could not start screen video. ${error.message ?: ""}".trim())
+        }
     }
 
-    private fun onMotion(activeNow: Boolean) {
+    private fun releaseScreenEncoder() {
+        try { screenEncoder?.release() } catch (_: Exception) {}
+        screenEncoder = null
+    }
+
+    private fun noteScreenRate(now: Long) {
+        if (screenFpsAt == 0L) screenFpsAt = now
+        screenFrames += 1
+        val elapsed = now - screenFpsAt
+        if (elapsed < 5_000) return
+        Log.i(TAG, "Screen capture %.1f fps".format(screenFrames * 1000.0 / elapsed))
+        screenFrames = 0
+        screenFpsAt = now
+    }
+
+    private fun considerClips() {
         if (!running || stopRequested.get() || segmentBusy) return
-        if (activeNow && active == null) {
-            segmentBusy = true
-            beginSegment()
+        val now = System.currentTimeMillis()
+        val screenHot = screenEncoder != null && now - lastScreenMotionAt < RecorderConfig.QUIET_MS
+        val cameraHot = cameraOn && cameraVideo != null && now - lastCameraMotionAt < RecorderConfig.QUIET_MS
+        segmentBusy = true
+        try {
+            if (screenHot) {
+                if (screenClip == null) openClip("screen")
+            } else if (screenClip != null && now - (screenClip?.started ?: now) >= 8_000L) {
+                endEncoder("screen")
+            }
+            if (cameraHot) {
+                if (cameraClip == null) openClip("camera")
+            } else if (cameraClip != null && now - (cameraClip?.started ?: now) >= 8_000L) {
+                endEncoder("camera")
+            }
+            rotateClip("screen", screenHot, now)
+            rotateClip("camera", cameraHot, now)
+        } finally {
             segmentBusy = false
-        } else if (!activeNow && active != null) {
-            val started = active?.started ?: return
-            if (System.currentTimeMillis() - started < 8_000) return
-            segmentBusy = true
-            endSegment(continueRecording = false)
-            segmentBusy = false
+        }
+    }
+
+    private fun rotateClip(kind: String, hot: Boolean, now: Long) {
+        val clip = if (kind == "camera") cameraClip else screenClip
+        if (clip != null && now - clip.started >= RecorderConfig.SEGMENT_MS) {
+            endEncoder(kind)
+            if (hot) openClip(kind)
+        }
+    }
+
+    private fun openClip(kind: String) {
+        val started = System.currentTimeMillis()
+        val file = File(RecordingFiles.pendingDir(this), "partial-$kind-$started.mp4")
+        val opened = if (kind == "camera") cameraVideo?.openFile(file) == true else screenEncoder?.openFile(file) == true
+        if (!opened) {
+            file.delete()
+            return
+        }
+        val finish: () -> Boolean = if (kind == "camera") {
+            { cameraVideo?.closeFile() == true }
+        } else {
+            { screenEncoder?.closeFile() == true }
+        }
+        val clip = Active(null, null, null, file, started, kind, finish)
+        if (kind == "camera") cameraClip = clip else screenClip = clip
+        holdWake()
+        val text = if (kind == "camera") "Recording the front camera." else "Recording ${store.deviceName}"
+        startInForeground(text)
+        publish(text)
+    }
+
+    private fun endEncoder(kind: String) {
+        val current = (if (kind == "camera") cameraClip else screenClip) ?: return
+        if (kind == "camera") cameraClip = null else screenClip = null
+        val saved = try {
+            current.finishStream?.invoke() == true
+        } catch (error: Exception) {
+            Log.w(TAG, "Clip close failed", error)
+            false
+        }
+        val ended = System.currentTimeMillis()
+        if (saved && ended > current.started && current.file.exists() && current.file.length() > 1024) {
+            val folder = current.file.parentFile
+            val finalFile = File(folder, "${current.started}-$ended.mp4")
+            if (current.file.renameTo(finalFile)) {
+                File(folder, "${current.started}-$ended.json").writeText(
+                    JSONObject()
+                        .put("startedAtMs", current.started)
+                        .put("endedAtMs", ended)
+                        .put("kind", current.kind)
+                        .toString()
+                )
+                UploadWorker.enqueue(this)
+            }
+        } else if (current.file.exists()) {
+            current.file.delete()
+        }
+        if (running && screenClip == null && cameraClip == null && active == null) {
+            startInForeground("Watching. A clip starts when the screen changes.")
             publish("Watching. A clip starts when the screen changes.")
         }
     }
 
     private fun releaseWatch() {
         handler.removeCallbacks(grab)
-        try { watchDisplay?.release() } catch (_: Exception) {}
-        watchDisplay = null
+        endEncoder("screen")
+        releaseScreenEncoder()
         try { reader?.close() } catch (_: Exception) {}
         reader = null
         previousLuma = null
@@ -382,89 +456,49 @@ class RecordingService : Service() {
 
     private fun beginSegment() {
         if (!running || stopRequested.get()) return
-        if (builtIn) {
-            beginBuiltInSegment()
-            return
-        }
-        val currentProjection = projection ?: return
-        val dir = RecordingFiles.pendingDir(this)
-        RecordingFiles.trim(dir, RecorderConfig.MAX_PENDING_BYTES)
-        dir.listFiles { file -> file.name.startsWith("partial-") }?.forEach { it.delete() }
-        val (width, height, dpi) = captureSize()
-        val started = System.currentTimeMillis()
-        val file = File(dir, "partial-$started.mp4")
-        val recorder = newRecorder()
-        var display: VirtualDisplay? = null
-        try {
-            recorder.setAudioSource(MediaRecorder.AudioSource.MIC)
-            recorder.setVideoSource(MediaRecorder.VideoSource.SURFACE)
-            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-            recorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-            recorder.setVideoSize(width, height)
-            recorder.setVideoFrameRate(RecorderConfig.FRAME_RATE)
-            recorder.setVideoEncodingBitRate(RecorderConfig.VIDEO_BITRATE)
-            recorder.setAudioEncodingBitRate(RecorderConfig.AUDIO_BITRATE)
-            recorder.setAudioSamplingRate(RecorderConfig.SAMPLE_RATE)
-            recorder.setAudioChannels(1)
-            recorder.setOutputFile(file.absolutePath)
-            recorder.setOnErrorListener { _, what, extra ->
-                Log.e(TAG, "Recorder error $what extra=$extra")
-                requestStop("The tablet stopped the recording. Open Till Recorder and start it again.")
-            }
-            recorder.prepare()
-            display = currentProjection.createVirtualDisplay(
-                "TillRecorder",
-                width,
-                height,
-                dpi,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                recorder.surface,
-                null,
-                null
-            )
-            recorder.start()
-            active = Active(recorder, display, null, file, started)
-            holdWake()
-            handler.removeCallbacks(rotate)
-            handler.postDelayed(rotate, RecorderConfig.SEGMENT_MS)
-            publish("Recording ${store.deviceName}")
-            UploadWorker.enqueue(this)
-        } catch (error: Exception) {
-            Log.e(TAG, "Segment failed", error)
-            try { display?.release() } catch (_: Exception) {}
-            try { recorder.release() } catch (_: Exception) {}
-            file.delete()
-            requestStop("Could not record the screen. ${error.message ?: ""}".trim())
-        }
+        openClip("screen")
     }
 
     private fun beginBuiltInSegment() {
         if (!running || stopRequested.get() || active != null) return
-        if (frameWidth <= 0 || frameHeight <= 0) return
+        val now = System.currentTimeMillis()
+        val kind = recordingKind(cameraOn, lastCameraMotionAt, lastScreenMotionAt, now, RecorderConfig.QUIET_MS)
+        val width: Int
+        val height: Int
+        if (kind == "camera") {
+            width = evenDimension(cameraFrameWidth)
+            height = evenDimension(cameraFrameHeight)
+            if (width < 2 || height < 2) return
+        } else {
+            if (frameWidth <= 0 || frameHeight <= 0) return
+            width = evenDimension(frameWidth)
+            height = evenDimension(frameHeight)
+            if (width < 2 || height < 2) return
+        }
         val dir = RecordingFiles.pendingDir(this)
         RecordingFiles.trim(dir, RecorderConfig.MAX_PENDING_BYTES)
         dir.listFiles { file -> file.name.startsWith("partial-") }?.forEach { it.delete() }
         val started = System.currentTimeMillis()
         val file = File(dir, "partial-$started.mp4")
-        audioSession = true
-        startInForeground("Recording ${store.deviceName}")
+        clipKind = kind
         val writer = try {
-            ClipWriter(file, frameWidth, frameHeight).also { it.start() }
+            ClipWriter(file, width, height).also { it.start() }
         } catch (error: Exception) {
             Log.e(TAG, "Segment failed", error)
-            audioSession = false
+            clipKind = "screen"
             file.delete()
             startInForeground("Watching. A clip starts when the screen changes.")
-            publish("Could not record the screen. ${error.message ?: ""}".trim())
+            publish("Could not record. ${error.message ?: ""}".trim())
             return
         }
+        audioSession = writer.hasAudio
+        startInForeground(if (kind == "camera") "Recording the front camera." else "Recording ${store.deviceName}")
         activeWriter = writer
-        active = Active(null, null, writer, file, started)
+        active = Active(null, null, writer, file, started, kind)
         holdWake()
         handler.removeCallbacks(rotate)
         handler.postDelayed(rotate, RecorderConfig.SEGMENT_MS)
-        publish("Recording ${store.deviceName}")
+        publish(if (kind == "camera") "Recording the front camera." else "Recording ${store.deviceName}")
         UploadWorker.enqueue(this)
     }
 
@@ -476,6 +510,7 @@ class RecordingService : Service() {
         }
         active = null
         activeWriter = null
+        clipKind = "screen"
         var ended = System.currentTimeMillis()
         var saved = false
         val writer = current.writer
@@ -510,6 +545,7 @@ class RecordingService : Service() {
                     JSONObject()
                         .put("startedAtMs", current.started)
                         .put("endedAtMs", ended)
+                        .put("kind", current.kind)
                         .toString()
                 )
                 UploadWorker.enqueue(this)
@@ -522,6 +558,7 @@ class RecordingService : Service() {
 
     private fun requestStop(reason: String) {
         if (!stopRequested.compareAndSet(false, true)) return
+        cancelRestart()
         store.watchEnabled = false
         builtIn = false
         running = false
@@ -532,7 +569,6 @@ class RecordingService : Service() {
             endSegment(continueRecording = false)
             releaseFront()
             releaseWatch()
-            releaseProjection()
             releaseWake()
             net.execute { ShopClient.heartbeat(store.current(), false) }
             publish(reason)
@@ -547,7 +583,6 @@ class RecordingService : Service() {
         publish(message)
         releaseFront()
         releaseWatch()
-        releaseProjection()
         releaseWake()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -556,15 +591,6 @@ class RecordingService : Service() {
     private fun teardown() {
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
-    }
-
-    private fun releaseProjection() {
-        val current = projection ?: return
-        projection = null
-        try { current.unregisterCallback(projectionCallback) } catch (_: Exception) {}
-        if (!systemStoppedProjection) {
-            try { current.stop() } catch (_: Exception) {}
-        }
     }
 
     private fun publish(detail: String) {
@@ -576,7 +602,7 @@ class RecordingService : Service() {
                 pendingCount = pending,
             )
         )
-        if (running && !stopRequested.get()) notify(notification(detail))
+        if (running && !stopRequested.get()) notify(notification())
     }
 
     @Suppress("DEPRECATION")
@@ -627,6 +653,16 @@ class RecordingService : Service() {
         if (lock.isHeld) lock.release()
     }
 
+    private fun applyRemoteLock(control: RemoteControl) {
+        val wasEngaged = RegisterLock.isEngaged()
+        RegisterLock.apply(control.locked, control.lockSeq)
+        if (RegisterLock.isEngaged()) {
+            RegisterLockActivity.show(this)
+        } else if (wasEngaged) {
+            RegisterLockActivity.hide()
+        }
+    }
+
     private fun applyCamera(wanted: Boolean) {
         if (!running || stopRequested.get()) return
         if (wanted == cameraOn) {
@@ -645,32 +681,118 @@ class RecordingService : Service() {
             cameraOn = true
             startInForeground("Front camera is on, next to the register screen.")
             holdCameraWake()
-            ensureFront().start()
+            val video = CameraVideo(
+                this,
+                {
+                    handler.post {
+                        lastCameraMotionAt = System.currentTimeMillis()
+                        lastMotionAt = lastCameraMotionAt
+                        considerClips()
+                    }
+                },
+                { seq, bytes, codec ->
+                    val settings = store.current()
+                    net.execute { ShopClient.uploadStream(settings, "camera", seq, bytes, codec) }
+                },
+                {
+                    handler.post {
+                        if (!cameraOn) return@post
+                        publish("Front camera did not open. It will try again.")
+                    }
+                },
+            )
+            cameraVideo = video
+            video.start()
             publish("Front camera is on. The website shows it beside the screen.")
         } else {
+            endEncoder("camera")
+            if (clipKind == "camera" && active != null) {
+                endSegment(continueRecording = false)
+            }
+            cameraVideo?.shutdown()
+            cameraVideo = null
             frontCamera?.stop()
             cameraOn = false
+            previousCameraLuma = null
+            lastCameraMotionAt = 0L
             releaseCameraWake()
             startInForeground(
-                if (active != null) "Recording this register." else "Watching. A clip starts when the screen changes."
+                if (active != null || screenClip != null) "Recording this register." else "Watching. A clip starts when the screen changes."
             )
             publish("Front camera is off.")
+        }
+    }
+
+    private fun onCameraJpeg(jpeg: ByteArray) {
+        if (!cameraOn || !running || stopRequested.get()) return
+        val now = System.currentTimeMillis()
+        if (now - lastCameraLiveAt >= RecorderConfig.LIVE_INTERVAL_MS) {
+            lastCameraLiveAt = now
+            val settings = store.current()
+            net.execute { ShopClient.uploadCamera(settings, jpeg) }
+        }
+        val bitmap = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: return
+        try {
+            val luma = sampleLuma(bitmap)
+            val previous = previousCameraLuma
+            previousCameraLuma = luma
+            if (previous != null && changedFraction(previous, luma) >= RecorderConfig.MOTION_FRACTION) {
+                lastCameraMotionAt = now
+                lastMotionAt = now
+            }
+            val width = evenDimension(bitmap.width)
+            val height = evenDimension(bitmap.height)
+            if (width >= 2 && height >= 2) {
+                cameraFrameWidth = width
+                cameraFrameHeight = height
+            }
+            if (clipKind == "camera") {
+                val frame = if (bitmap.width == width && bitmap.height == height) {
+                    bitmap
+                } else if (width >= 2 && height >= 2) {
+                    android.graphics.Bitmap.createScaledBitmap(bitmap, width, height, true)
+                } else {
+                    null
+                }
+                if (frame != null) {
+                    try {
+                        activeWriter?.draw(frame)
+                    } finally {
+                        if (frame !== bitmap && !frame.isRecycled) frame.recycle()
+                    }
+                }
+            }
+            handler.post { considerClips() }
+        } finally {
+            if (!bitmap.isRecycled) bitmap.recycle()
         }
     }
 
     private fun ensureFront(): FrontCamera {
         val existing = frontCamera
         if (existing != null) return existing
-        val created = FrontCamera(this) { jpeg ->
-            val settings = store.current()
-            net.execute { ShopClient.uploadCamera(settings, jpeg) }
-        }
+        val created = FrontCamera(
+            this,
+            { jpeg -> onCameraJpeg(jpeg) },
+            {
+                handler.post {
+                    if (!cameraOn) return@post
+                    cameraOn = false
+                    publish("Front camera did not open. It will try again.")
+                }
+            },
+        )
         frontCamera = created
         return created
     }
 
     private fun releaseFront() {
+        endEncoder("camera")
         cameraOn = false
+        previousCameraLuma = null
+        lastCameraMotionAt = 0L
+        cameraVideo?.shutdown()
+        cameraVideo = null
         frontCamera?.shutdown()
         frontCamera = null
         releaseCameraWake()
@@ -695,23 +817,16 @@ class RecordingService : Service() {
 
     private fun startInForeground(text: String) {
         var type = 0
-        if (builtIn) {
-            if (Build.VERSION.SDK_INT >= 34) type = type or specialUseType()
-            if (Build.VERSION.SDK_INT >= 30 && (audioSession || Build.VERSION.SDK_INT < 34)) {
-                type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            }
-        } else {
-            if (Build.VERSION.SDK_INT >= 29) {
-                type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            }
-            if (Build.VERSION.SDK_INT >= 30) {
-                type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            }
+        if (Build.VERSION.SDK_INT >= 34) {
+            type = type or specialUseType()
+        }
+        if (audioSession && Build.VERSION.SDK_INT >= 30) {
+            type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         }
         if (cameraOn && Build.VERSION.SDK_INT >= 34) {
             type = type or cameraForegroundType()
         }
-        ServiceCompat.startForeground(this, NOTIF_ID, notification(text), type)
+        ServiceCompat.startForeground(this, NOTIF_ID, notification(), type)
     }
 
     @RequiresApi(34)
@@ -720,13 +835,7 @@ class RecordingService : Service() {
     @RequiresApi(34)
     private fun cameraForegroundType(): Int = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
 
-    private fun notification(text: String): Notification {
-        val stop = PendingIntent.getService(
-            this,
-            1,
-            Intent(this, RecordingService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+    private fun notification(): Notification {
         val open = PendingIntent.getActivity(
             this,
             0,
@@ -735,21 +844,46 @@ class RecordingService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_record)
-            .setContentTitle(
-                when {
-                    cameraOn -> "Front camera is on"
-                    active != null -> "Recording this register"
-                    else -> "Watching this register"
-                }
-            )
-            .setContentText(text)
+            .setContentTitle(getString(R.string.notif_quiet_title))
+            .setContentText(getString(R.string.notif_quiet_text))
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setVisibility(NotificationCompat.VISIBILITY_SECRET)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-            .addAction(R.drawable.ic_stat_record, getString(R.string.notif_stop), stop)
             .build()
+    }
+
+    private fun restartPending(): PendingIntent {
+        return PendingIntent.getForegroundService(
+            this,
+            3,
+            Intent(this, RecordingService::class.java).setAction(ACTION_START_BUILTIN),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    private fun scheduleRestart() {
+        val alarm = getSystemService(AlarmManager::class.java) ?: return
+        try {
+            alarm.setAndAllowWhileIdle(
+                AlarmManager.ELAPSED_REALTIME_WAKEUP,
+                SystemClock.elapsedRealtime() + 1_500L,
+                restartPending()
+            )
+        } catch (error: Exception) {
+            Log.w(TAG, "Could not schedule watch restart", error)
+        }
+    }
+
+    private fun cancelRestart() {
+        try {
+            getSystemService(AlarmManager::class.java)?.cancel(restartPending())
+        } catch (_: Exception) {
+        }
     }
 
     private fun notify(notification: Notification) {
@@ -762,34 +896,29 @@ class RecordingService : Service() {
         val writer: ClipWriter?,
         val file: File,
         val started: Long,
+        val kind: String,
+        val finishStream: (() -> Boolean)? = null,
     )
 
     companion object {
         private const val TAG = "TillRecorder"
-        private const val CHANNEL = "till_recording"
+        private const val CHANNEL = "till_status"
+        private const val LEGACY_CHANNEL = "till_recording"
         private const val NOTIF_ID = 7
-        private const val ACTION_START = "com.tillrecorder.agent.START"
         private const val ACTION_START_BUILTIN = "com.tillrecorder.agent.START_BUILTIN"
         private const val ACTION_STOP = "com.tillrecorder.agent.STOP"
-        private const val EXTRA_RESULT_CODE = "result_code"
-        private const val EXTRA_RESULT_DATA = "result_data"
+        private const val EXTRA_AUTHORIZED = "authorized_stop"
 
         fun startBuiltIn(context: Context) {
             val intent = Intent(context, RecordingService::class.java).setAction(ACTION_START_BUILTIN)
             ContextCompat.startForegroundService(context, intent)
         }
 
-        fun start(context: Context, resultCode: Int, data: Intent) {
-            val intent = Intent(context, RecordingService::class.java)
-                .setAction(ACTION_START)
-                .putExtra(EXTRA_RESULT_CODE, resultCode)
-                .putExtra(EXTRA_RESULT_DATA, data)
-            ContextCompat.startForegroundService(context, intent)
-        }
-
         fun stop(context: Context) {
             context.startService(
-                Intent(context, RecordingService::class.java).setAction(ACTION_STOP)
+                Intent(context, RecordingService::class.java)
+                    .setAction(ACTION_STOP)
+                    .putExtra(EXTRA_AUTHORIZED, true)
             )
         }
     }

@@ -32,13 +32,14 @@ class ClipWriter(
     private var videoEos = false
     private var audioEos = false
     private val videoCodec: MediaCodec
-    private val audioCodec: MediaCodec
+    private var audioCodec: MediaCodec? = null
     private val surface: Surface
-    private val audioRecord: AudioRecord
+    private var audioRecord: AudioRecord? = null
     private val dest = Rect(0, 0, width, height)
     @Volatile private var running = true
     private var audioThread: Thread? = null
     private var started = false
+    val hasAudio: Boolean
 
     init {
         val videoFormat = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height)
@@ -47,48 +48,70 @@ class ClipWriter(
             MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface,
         )
         videoFormat.setInteger(MediaFormat.KEY_BIT_RATE, RecorderConfig.VIDEO_BITRATE)
-        videoFormat.setInteger(MediaFormat.KEY_FRAME_RATE, 2)
+        videoFormat.setInteger(MediaFormat.KEY_FRAME_RATE, RecorderConfig.FRAME_RATE)
         videoFormat.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
         videoCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
         videoCodec.configure(videoFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         surface = videoCodec.createInputSurface()
+        hasAudio = openMicrophone()
+        if (!hasAudio) audioEos = true
+    }
 
-        val audioFormat = MediaFormat.createAudioFormat(
-            MediaFormat.MIMETYPE_AUDIO_AAC,
-            RecorderConfig.SAMPLE_RATE,
-            1,
-        )
-        audioFormat.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
-        audioFormat.setInteger(MediaFormat.KEY_BIT_RATE, RecorderConfig.AUDIO_BITRATE)
-        audioFormat.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16_384)
-        audioCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
-        audioCodec.configure(audioFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-
-        val minBuffer = AudioRecord.getMinBufferSize(
-            RecorderConfig.SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-        )
-        audioRecord = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
-            RecorderConfig.SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            minBuffer.coerceAtLeast(2048) * 2,
-        )
-        if (audioRecord.state != AudioRecord.STATE_INITIALIZED) {
-            releaseQuietly()
-            error("Microphone is not available")
+    private fun openMicrophone(): Boolean {
+        return try {
+            val audioFormat = MediaFormat.createAudioFormat(
+                MediaFormat.MIMETYPE_AUDIO_AAC,
+                RecorderConfig.SAMPLE_RATE,
+                1,
+            )
+            audioFormat.setInteger(MediaFormat.KEY_AAC_PROFILE, MediaCodecInfo.CodecProfileLevel.AACObjectLC)
+            audioFormat.setInteger(MediaFormat.KEY_BIT_RATE, RecorderConfig.AUDIO_BITRATE)
+            audioFormat.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 16_384)
+            val codec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_AUDIO_AAC)
+            codec.configure(audioFormat, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+            audioCodec = codec
+            val minBuffer = AudioRecord.getMinBufferSize(
+                RecorderConfig.SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+            )
+            val record = AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                RecorderConfig.SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                minBuffer.coerceAtLeast(2048) * 2,
+            )
+            audioRecord = record
+            if (record.state != AudioRecord.STATE_INITIALIZED) {
+                record.release()
+                audioRecord = null
+                codec.release()
+                audioCodec = null
+                false
+            } else {
+                true
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "Microphone is busy, recording video only", error)
+            try { audioRecord?.release() } catch (_: Exception) {}
+            try { audioCodec?.release() } catch (_: Exception) {}
+            audioRecord = null
+            audioCodec = null
+            false
         }
     }
 
     fun start() {
         synchronized(lock) {
             videoCodec.start()
-            audioCodec.start()
-            audioRecord.startRecording()
+            if (hasAudio) {
+                audioCodec?.start()
+                audioRecord?.startRecording()
+            }
             started = true
         }
+        if (!hasAudio) return
         val thread = Thread({ recordAudio() }, "till-clip-audio")
         audioThread = thread
         thread.start()
@@ -114,7 +137,7 @@ class ClipWriter(
             Thread.currentThread().interrupt()
         }
         synchronized(lock) {
-            signalAudioEnd()
+            if (hasAudio) signalAudioEnd() else audioEos = true
             try {
                 videoCodec.signalEndOfInputStream()
             } catch (error: Exception) {
@@ -123,7 +146,8 @@ class ClipWriter(
             val deadline = System.nanoTime() + 3_000_000_000L
             while ((!videoEos || !audioEos) && System.nanoTime() < deadline) {
                 drain(videoCodec, video = true, untilEos = false)
-                drain(audioCodec, video = false, untilEos = false)
+                val audio = audioCodec
+                if (audio != null) drain(audio, video = false, untilEos = false)
             }
             val ok = muxerStarted
             releaseQuietly()
@@ -132,30 +156,36 @@ class ClipWriter(
     }
 
     private fun recordAudio() {
+        val record = audioRecord ?: return
+        val codec = audioCodec ?: return
         val buffer = ByteArray(2048)
         var samples = 0L
         while (running) {
-            val read = audioRecord.read(buffer, 0, buffer.size)
+            val read = record.read(buffer, 0, buffer.size)
             if (read <= 0) continue
-            val index = audioCodec.dequeueInputBuffer(10_000)
+            val index = codec.dequeueInputBuffer(10_000)
             if (index < 0) continue
-            val input = audioCodec.getInputBuffer(index) ?: continue
+            val input = codec.getInputBuffer(index) ?: continue
             input.clear()
             input.put(buffer, 0, read)
             val timeUs = samples * 1_000_000L / RecorderConfig.SAMPLE_RATE
             samples += read / 2
-            audioCodec.queueInputBuffer(index, 0, read, timeUs, 0)
-            synchronized(lock) { drain(audioCodec, video = false, untilEos = false) }
+            codec.queueInputBuffer(index, 0, read, timeUs, 0)
+            synchronized(lock) { drain(codec, video = false, untilEos = false) }
         }
     }
 
     private fun signalAudioEnd() {
-        val index = audioCodec.dequeueInputBuffer(10_000)
+        val codec = audioCodec ?: run {
+            audioEos = true
+            return
+        }
+        val index = codec.dequeueInputBuffer(10_000)
         if (index < 0) {
             audioEos = true
             return
         }
-        audioCodec.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+        codec.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM)
     }
 
     private fun drain(codec: MediaCodec, video: Boolean, untilEos: Boolean) {
@@ -167,7 +197,7 @@ class ClipWriter(
                 index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                     val track = muxer.addTrack(codec.outputFormat)
                     if (video) videoTrack = track else audioTrack = track
-                    if (videoTrack >= 0 && audioTrack >= 0 && !muxerStarted) {
+                    if (videoTrack >= 0 && (!hasAudio || audioTrack >= 0) && !muxerStarted) {
                         muxer.start()
                         muxerStarted = true
                     }
@@ -192,12 +222,12 @@ class ClipWriter(
     }
 
     private fun releaseQuietly() {
-        try { if (started) audioRecord.stop() } catch (_: Exception) {}
-        try { audioRecord.release() } catch (_: Exception) {}
+        try { if (started) audioRecord?.stop() } catch (_: Exception) {}
+        try { audioRecord?.release() } catch (_: Exception) {}
         try { videoCodec.stop() } catch (_: Exception) {}
         try { videoCodec.release() } catch (_: Exception) {}
-        try { audioCodec.stop() } catch (_: Exception) {}
-        try { audioCodec.release() } catch (_: Exception) {}
+        try { audioCodec?.stop() } catch (_: Exception) {}
+        try { audioCodec?.release() } catch (_: Exception) {}
         try { surface.release() } catch (_: Exception) {}
         try {
             if (muxerStarted) muxer.stop()

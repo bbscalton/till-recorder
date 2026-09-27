@@ -2,7 +2,8 @@ package com.tillrecorder.agent
 
 import android.content.Context
 import android.graphics.ImageFormat
-import android.os.Build
+import android.hardware.display.DisplayManager
+import android.view.Display
 import android.view.WindowManager
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
@@ -27,6 +28,7 @@ import kotlin.math.max
 class FrontCamera(
     private val context: Context,
     private val onJpeg: (ByteArray) -> Unit,
+    private val onFailed: () -> Unit = {},
 ) {
     private val thread = HandlerThread("till-front-camera").apply { start() }
     private val handler = Handler(thread.looper)
@@ -58,7 +60,7 @@ class FrontCamera(
             } catch (error: Exception) {
                 Log.w(TAG, "Front camera shot failed", error)
             }
-            handler.postDelayed(this, 2_000)
+            handler.postDelayed(this, 800)
         }
     }
 
@@ -72,6 +74,7 @@ class FrontCamera(
                 Log.w(TAG, "Front camera did not open", error)
                 open = false
                 closeCamera()
+                onFailed()
             }
         }
     }
@@ -100,6 +103,7 @@ class FrontCamera(
         }
         if (id == null) {
             open = false
+            onFailed()
             return
         }
         val characteristics = manager.getCameraCharacteristics(id)
@@ -183,9 +187,10 @@ class FrontCamera(
 
     private fun jpegOrientation(characteristics: CameraCharacteristics): Int {
         val sensor = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION) ?: 0
-        val rotation = if (Build.VERSION.SDK_INT >= 30) {
-            context.display?.rotation ?: Surface.ROTATION_0
-        } else {
+        val rotation = try {
+            val manager = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
+            manager.getDisplay(Display.DEFAULT_DISPLAY)?.rotation ?: Surface.ROTATION_0
+        } catch (_: Exception) {
             @Suppress("DEPRECATION")
             (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay.rotation
         }

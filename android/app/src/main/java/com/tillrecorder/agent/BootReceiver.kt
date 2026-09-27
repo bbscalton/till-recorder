@@ -7,16 +7,31 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.os.UserManager
+import android.util.Log
 import androidx.core.app.NotificationCompat
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
-        if (intent?.action != Intent.ACTION_BOOT_COMPLETED) return
+        try {
+            receive(context, intent)
+        } catch (error: Exception) {
+            Log.w(TAG, "Boot receiver failed", error)
+        }
+    }
+
+    private fun receive(context: Context, intent: Intent?) {
+        val action = intent?.action ?: return
+        if (action !in BOOT_ACTIONS) return
+        if (!userUnlocked(context)) return
         val store = SettingsStore(context)
-        if (store.watchEnabled && store.isConfigured && TillAccessibilityService.enabled(context)) {
+        val accessibilityOn = TillAccessibilityService.enabled(context)
+        if (shouldAutoStartWatching(store.watchEnabled, store.isConfigured, accessibilityOn)) {
+            Log.i(TAG, "Starting built-in watch from $action")
             RecordingService.startBuiltIn(context)
             return
         }
+        if (action == Intent.ACTION_LOCKED_BOOT_COMPLETED) return
         if (!store.remindAfterRestart || !store.isConfigured) return
         val manager = context.getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -45,7 +60,28 @@ class BootReceiver : BroadcastReceiver() {
     }
 
     companion object {
+        private const val TAG = "TillRecorder"
         private const val CHANNEL = "till_reminders"
         private const val REMIND_ID = 42
+        private val BOOT_ACTIONS = setOf(
+            Intent.ACTION_BOOT_COMPLETED,
+            Intent.ACTION_LOCKED_BOOT_COMPLETED,
+            Intent.ACTION_USER_UNLOCKED,
+            Intent.ACTION_MY_PACKAGE_REPLACED,
+            "android.intent.action.QUICKBOOT_POWERON",
+            "com.htc.intent.action.QUICKBOOT_POWERON",
+        )
+
+        private fun userUnlocked(context: Context): Boolean {
+            if (Build.VERSION.SDK_INT < 24) return true
+            val user = context.getSystemService(UserManager::class.java) ?: return true
+            return user.isUserUnlocked
+        }
     }
 }
+
+internal fun shouldAutoStartWatching(
+    watchEnabled: Boolean,
+    configured: Boolean,
+    accessibilityEnabled: Boolean,
+): Boolean = watchEnabled && configured && accessibilityEnabled

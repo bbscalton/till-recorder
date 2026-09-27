@@ -4,5 +4,6 @@
     <color name="ink">#F3EDE6</color>
     <color name="muted">#C4A48A</color>
     <color name="record">#9F2D2D</color>
+    <color name="pin_error">#FFB4A8</color>
     <color name="launcher_bg">#3F2A24</color>
 </resources>

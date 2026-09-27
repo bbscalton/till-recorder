@@ -7,7 +7,7 @@ object RecorderConfig {
     const val MOTION_FRACTION = 0.02f
     const val WATCH_LONG_EDGE = 640
     const val LONG_EDGE = 960
-    const val FRAME_RATE = 10
+    const val FRAME_RATE = 15
     const val VIDEO_BITRATE = 900_000
     const val AUDIO_BITRATE = 64_000
     const val SAMPLE_RATE = 44_100

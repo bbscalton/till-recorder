@@ -66,7 +66,12 @@ class UploadWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     private fun readMeta(json: File, mp4: File): SegmentMeta? {
         return try {
             val obj = JSONObject(json.readText())
-            SegmentMeta(obj.getLong("startedAtMs"), obj.getLong("endedAtMs"))
+            val kind = obj.optString("kind", "screen")
+            SegmentMeta(
+                obj.getLong("startedAtMs"),
+                obj.getLong("endedAtMs"),
+                if (kind == "camera") "camera" else "screen",
+            )
         } catch (error: Exception) {
             Log.w(TAG, "Dropping unreadable clip ${json.name}", error)
             json.delete()

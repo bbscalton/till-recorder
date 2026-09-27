@@ -14,7 +14,7 @@
     <form id="loginForm" class="card">
       <p class="eyebrow">Watch</p>
       <h1>Open a register</h1>
-      <p class="lede">Sign in with your token. Pair a register with a code, then the tablet connects itself. The live picture shows the screen, and you can turn the front camera on so both show together.</p>
+      <p class="lede">Sign in with your token. Pair a register with a code, then the tablet connects itself. Live video shows the screen, and you can turn the front camera on so both play together.</p>
       <label for="token">Token</label>
       <input id="token" type="password" autocomplete="current-password" required>
       <p id="loginError" class="error" hidden></p>
@@ -40,16 +40,18 @@
         <div>
           <div class="live-head">
             <h2 id="liveTitle">Register screen</h2>
-            <p id="liveState" class="hint">Idle</p>
+            <button id="lockToggle" type="button">Lock</button>
           </div>
-          <img id="live" alt="Latest picture from the register screen">
+          <p id="lockHint" class="hint">Locks this register until the owner PIN is entered on the tablet.</p>
+          <p id="liveState" class="hint">Idle</p>
+          <video id="live" muted autoplay playsinline></video>
         </div>
         <div>
           <div class="live-head">
             <h2>Front camera</h2>
             <button id="cameraToggle" type="button">Turn on</button>
           </div>
-          <img id="camera" alt="Front camera on the register" hidden>
+          <video id="camera" muted autoplay playsinline hidden></video>
           <p id="cameraHint" class="camera-off">Off. Turn it on to see the person at the register beside the screen.</p>
         </div>
       </div>
@@ -60,6 +62,8 @@
         <button id="playDay" type="button">Play day</button>
         <button id="backThirty" type="button">−30 sec</button>
         <button id="forwardThirty" type="button">+30 sec</button>
+        <button id="deleteClip" type="button" hidden>Delete this clip</button>
+        <button id="deleteDay" type="button">Delete this day</button>
         <p id="clock" class="clock">—</p>
       </div>
       <div id="timeline" class="timeline"><div id="track" class="track"></div><div id="playhead" class="playhead" hidden></div></div>

@@ -25,4 +25,43 @@ class ScreenMotionTest {
         val current = ByteArray(100) { 200.toByte() }
         assertTrue(changedFraction(previous, current) > 0.02f)
     }
+
+    @Test
+    fun cameraMotionStartsACameraClip() {
+        val now = 10_000L
+        assertEquals(
+            "camera",
+            recordingKind(
+                cameraOn = true,
+                lastCameraMotionAt = 9_000L,
+                lastScreenMotionAt = 1_000L,
+                now = now,
+                quietMs = 20_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun aStillCameraLeavesScreenClipsAlone() {
+        assertEquals(
+            "screen",
+            recordingKind(
+                cameraOn = false,
+                lastCameraMotionAt = 9_000L,
+                lastScreenMotionAt = 9_000L,
+                now = 10_000L,
+                quietMs = 20_000L,
+            ),
+        )
+        assertEquals(
+            "screen",
+            recordingKind(
+                cameraOn = true,
+                lastCameraMotionAt = 0L,
+                lastScreenMotionAt = 9_000L,
+                now = 10_000L,
+                quietMs = 20_000L,
+            ),
+        )
+    }
 }

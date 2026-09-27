@@ -5,7 +5,7 @@ const MAX_BYTES = 80 * 1024 * 1024;
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Device-Id, X-Device-Name",
+  "Access-Control-Allow-Headers": "Authorization, Content-Type, X-Device-Id, X-Device-Name, X-Stream-Kind, X-Stream-Seq, X-Stream-Codec",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
 };
 
@@ -37,17 +37,24 @@ async function handleApi(request, env, url) {
   if (request.method === "GET" && url.pathname === "/api/segments") return listSegments(env, url);
   if (request.method === "POST" && url.pathname === "/api/heartbeat") return heartbeat(request, env);
   if (request.method === "POST" && url.pathname === "/api/live") return saveLive(request, env);
+  if (request.method === "POST" && url.pathname === "/api/stream") return saveStream(request, env);
+  if (request.method === "GET" && url.pathname.startsWith("/api/stream/")) return readStream(env, url);
   if (request.method === "GET" && url.pathname.startsWith("/api/live/")) {
     return readLive(env, decodeURIComponent(url.pathname.slice("/api/live/".length)));
   }
   if (request.method === "POST" && url.pathname === "/api/camera") return setCamera(request, env);
+  if (request.method === "POST" && url.pathname === "/api/lock") return setLock(request, env);
   if (request.method === "POST" && url.pathname === "/api/camera-frame") return saveCamera(request, env);
   if (request.method === "GET" && url.pathname.startsWith("/api/camera/")) {
     return readCamera(env, decodeURIComponent(url.pathname.slice("/api/camera/".length)));
   }
   if (request.method === "POST" && url.pathname === "/api/segments") return saveSegment(request, env);
+  if (request.method === "DELETE" && url.pathname === "/api/segments") return deleteDay(env, url);
   if (request.method === "GET" && url.pathname.startsWith("/api/media/")) {
     return readMedia(request, env, url.pathname.slice("/api/media/".length));
+  }
+  if (request.method === "DELETE" && url.pathname.startsWith("/api/media/")) {
+    return deleteSegment(env, url.pathname.slice("/api/media/".length));
   }
   return json({ error: "Not found" }, 404);
 }
@@ -159,17 +166,75 @@ async function heartbeat(request, env) {
     lastSeen: Date.now(),
   });
   const control = await readControl(env, body.device_id);
-  return json({ ok: true, camera: Boolean(control.camera) });
+  return json({
+    ok: true,
+    camera: control.camera,
+    locked: control.locked,
+    lockSeq: control.lockSeq,
+  });
+}
+
+async function saveStream(request, env) {
+  const deviceId = request.headers.get("X-Device-Id") || "";
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  const kind = request.headers.get("X-Stream-Kind") || "";
+  if (kind !== "screen" && kind !== "camera") return json({ error: "Stream is not valid" }, 400);
+  const seq = Number(request.headers.get("X-Stream-Seq"));
+  if (!Number.isInteger(seq) || seq < 0 || seq > 1_000_000_000) return json({ error: "Stream is not valid" }, 400);
+  const codec = String(request.headers.get("X-Stream-Codec") || "avc1.42E01E").replace(/[^a-zA-Z0-9.]/g, "").slice(0, 32) || "avc1.42E01E";
+  const body = await request.arrayBuffer();
+  if (body.byteLength < 8 || body.byteLength > 4_000_000) return json({ error: "Stream is not valid" }, 400);
+  const base = `stream/${deviceId}/${kind}`;
+  const key = seq === 0 ? `${base}/init` : `${base}/${seq}`;
+  await env.RECORDINGS.put(key, body, { httpMetadata: { contentType: "video/mp4" } });
+  await env.RECORDINGS.put(`${base}/head.json`, JSON.stringify({
+    seq,
+    codec,
+    updatedAt: Date.now(),
+  }), { httpMetadata: { contentType: "application/json" } });
+  if (seq > 24) await env.RECORDINGS.delete(`${base}/${seq - 24}`);
+  return json({ ok: true });
+}
+
+async function readStream(env, url) {
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts.length !== 5) return json({ error: "Not found" }, 404);
+  const deviceId = decodeURIComponent(parts[2]);
+  const kind = parts[3];
+  const name = parts[4];
+  if (!DEVICE_ID.test(deviceId) || (kind !== "screen" && kind !== "camera")) return json({ error: "Not found" }, 404);
+  if (name === "head") {
+    const object = await env.RECORDINGS.get(`stream/${deviceId}/${kind}/head.json`);
+    if (!object) return json({ error: "No live video" }, 404);
+    return new Response(await object.text(), {
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...cors },
+    });
+  }
+  if (name !== "init" && !/^[0-9]+$/.test(name)) return json({ error: "Not found" }, 404);
+  const key = name === "init" ? `stream/${deviceId}/${kind}/init` : `stream/${deviceId}/${kind}/${name}`;
+  const object = await env.RECORDINGS.get(key);
+  if (!object) return json({ error: "No live video" }, 404);
+  const bytes = await object.arrayBuffer();
+  return new Response(bytes, {
+    headers: {
+      "Content-Type": "video/mp4",
+      "Cache-Control": "no-store",
+      "Content-Length": String(bytes.byteLength),
+      ...cors,
+    },
+  });
 }
 
 async function saveLive(request, env) {
   const deviceId = request.headers.get("X-Device-Id") || "";
   if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
   const name = cleanName(request.headers.get("X-Device-Name") || "Register");
-  await env.RECORDINGS.put(`live/${deviceId}.jpg`, request.body, {
+  const jpeg = await readJpeg(request);
+  if (!jpeg) return json({ error: "Picture is not valid" }, 400);
+  await env.RECORDINGS.put(`live/${deviceId}.jpg`, jpeg, {
     httpMetadata: { contentType: "image/jpeg" },
   });
-  await writeStatus(env, { id: deviceId, name, recording: true, lastSeen: Date.now() });
+  await writeStatus(env, { id: deviceId, name, lastSeen: Date.now() });
   return json({ ok: true });
 }
 
@@ -178,11 +243,27 @@ async function setCamera(request, env) {
   const deviceId = body.device_id || "";
   if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
   const camera = Boolean(body.enabled);
-  await env.RECORDINGS.put(`control/${deviceId}.json`, JSON.stringify({ camera }), {
-    httpMetadata: { contentType: "application/json" },
-  });
+  const control = await readControl(env, deviceId);
+  control.camera = camera;
+  await writeControl(env, deviceId, control);
   if (!camera) await env.RECORDINGS.delete(`camera/${deviceId}.jpg`);
   return json({ ok: true, camera });
+}
+
+async function setLock(request, env) {
+  const body = await request.json();
+  const deviceId = body.device_id || "";
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  const control = await readControl(env, deviceId);
+  const locked = Boolean(body.locked);
+  const seen = Number(body.lock_seq);
+  if (!locked && Number.isFinite(seen) && seen !== Number(control.lockSeq || 0)) {
+    return json({ ok: true, locked: control.locked, lockSeq: control.lockSeq, stale: true });
+  }
+  control.locked = locked;
+  control.lockSeq = Number(control.lockSeq || 0) + 1;
+  await writeControl(env, deviceId, control);
+  return json({ ok: true, locked: control.locked, lockSeq: control.lockSeq });
 }
 
 async function saveCamera(request, env) {
@@ -190,38 +271,60 @@ async function saveCamera(request, env) {
   if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
   const control = await readControl(env, deviceId);
   if (!control.camera) return json({ ok: true, ignored: true });
-  const length = Number(request.headers.get("Content-Length") || "0");
-  if (length < 500 || length > 2 * 1024 * 1024) return json({ error: "Picture is not valid" }, 400);
-  await env.RECORDINGS.put(`camera/${deviceId}.jpg`, request.body, {
+  const jpeg = await readJpeg(request);
+  if (!jpeg) return json({ error: "Picture is not valid" }, 400);
+  await env.RECORDINGS.put(`camera/${deviceId}.jpg`, jpeg, {
     httpMetadata: { contentType: "image/jpeg" },
   });
   return json({ ok: true });
 }
 
-async function readCamera(env, deviceId) {
-  if (!DEVICE_ID.test(deviceId)) return json({ error: "Not found" }, 404);
-  const object = await env.RECORDINGS.get(`camera/${deviceId}.jpg`);
-  if (!object) return json({ error: "Front camera is off" }, 404);
+async function readJpeg(request) {
+  const bytes = await request.arrayBuffer();
+  if (bytes.byteLength < 500 || bytes.byteLength > 2 * 1024 * 1024) return null;
+  return bytes;
+}
+
+function imageResponse(object, missing) {
+  if (!object || !object.body || object.size < 500) return json({ error: missing }, 404);
   const headers = new Headers(cors);
   headers.set("Content-Type", "image/jpeg");
   headers.set("Cache-Control", "no-store");
+  headers.set("Content-Length", String(object.size));
   return new Response(object.body, { headers });
+}
+
+async function readCamera(env, deviceId) {
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Not found" }, 404);
+  const object = await env.RECORDINGS.get(`camera/${deviceId}.jpg`);
+  return imageResponse(object, "Front camera is off");
 }
 
 async function readControl(env, deviceId) {
   const object = await env.RECORDINGS.get(`control/${deviceId}.json`);
-  if (!object) return { camera: false };
-  return object.json();
+  if (!object) return { camera: false, locked: false, lockSeq: 0 };
+  const parsed = await object.json();
+  return {
+    camera: Boolean(parsed.camera),
+    locked: Boolean(parsed.locked),
+    lockSeq: Number(parsed.lockSeq || 0),
+  };
+}
+
+async function writeControl(env, deviceId, control) {
+  await env.RECORDINGS.put(`control/${deviceId}.json`, JSON.stringify({
+    camera: Boolean(control.camera),
+    locked: Boolean(control.locked),
+    lockSeq: Number(control.lockSeq || 0),
+  }), {
+    httpMetadata: { contentType: "application/json" },
+  });
 }
 
 async function readLive(env, deviceId) {
   if (!DEVICE_ID.test(deviceId)) return json({ error: "Not found" }, 404);
   const object = await env.RECORDINGS.get(`live/${deviceId}.jpg`);
-  if (!object) return json({ error: "No live picture yet" }, 404);
-  const headers = new Headers(cors);
-  headers.set("Content-Type", "image/jpeg");
-  headers.set("Cache-Control", "no-store");
-  return new Response(object.body, { headers });
+  return imageResponse(object, "No live picture yet");
 }
 
 async function saveSegment(request, env) {
@@ -240,12 +343,13 @@ async function saveSegment(request, env) {
   if (!file || typeof file.arrayBuffer !== "function") return json({ error: "Clip file is missing" }, 400);
   if (file.size > MAX_BYTES) return json({ error: "Clip is too large" }, 413);
   if (file.size < 1024) return json({ error: "Clip is empty" }, 400);
+  const kind = String(form.get("kind") || "screen") === "camera" ? "camera" : "screen";
   const id = crypto.randomUUID().replaceAll("-", "");
   const key = `clips/${deviceId}/${localDay}/${id}.mp4`;
   await env.RECORDINGS.put(key, await file.arrayBuffer(), {
     httpMetadata: { contentType: "video/mp4" },
   });
-  const segment = { id, deviceId, deviceName, startedAtMs, endedAtMs, bytes: file.size, key };
+  const segment = { id, deviceId, deviceName, startedAtMs, endedAtMs, bytes: file.size, key, kind };
   await env.RECORDINGS.put(`index/${deviceId}/${localDay}/${id}.json`, JSON.stringify(segment), {
     httpMetadata: { contentType: "application/json" },
   });
@@ -266,8 +370,10 @@ async function listDevices(env) {
     if (DEVICE_ID.test(device.id || "")) {
       const control = await readControl(env, device.id);
       device.camera = Boolean(control.camera);
+      device.locked = Boolean(control.locked);
     } else {
       device.camera = false;
+      device.locked = false;
     }
     devices.push(device);
   }
@@ -288,6 +394,39 @@ async function listSegments(env, url) {
   segments.sort((a, b) => a.startedAtMs - b.startedAtMs);
   const total = segments.reduce((sum, segment) => sum + Number(segment.bytes || 0), 0);
   return json({ deviceId, date, totalBytes: total, segments });
+}
+
+async function deleteDay(env, url) {
+  const deviceId = url.searchParams.get("device_id") || "";
+  const date = url.searchParams.get("date") || "";
+  if (!DEVICE_ID.test(deviceId) || !DAY.test(date)) return json({ error: "Not valid" }, 400);
+  const objects = await listAll(env, `index/${deviceId}/${date}/`);
+  let removed = 0;
+  for (const item of objects) {
+    const object = await env.RECORDINGS.get(item.key);
+    if (object) {
+      const segment = await object.json();
+      if (String(segment.key || "").startsWith("clips/")) await env.RECORDINGS.delete(segment.key);
+      if (SEGMENT_ID.test(segment.id || "")) await env.RECORDINGS.delete(`ids/${segment.id}`);
+    }
+    await env.RECORDINGS.delete(item.key);
+    removed += 1;
+  }
+  return json({ ok: true, removed });
+}
+
+async function deleteSegment(env, rawId) {
+  const id = decodeURIComponent(rawId);
+  if (!SEGMENT_ID.test(id)) return json({ error: "Not found" }, 404);
+  const pointer = await env.RECORDINGS.get(`ids/${id}`);
+  if (!pointer) return json({ error: "Not found" }, 404);
+  const key = (await pointer.text()).trim();
+  const match = /^clips\/([^/]+)\/(\d{4}-\d{2}-\d{2})\/([a-f0-9]{32})\.mp4$/.exec(key);
+  if (!match) return json({ error: "Not found" }, 404);
+  await env.RECORDINGS.delete(key);
+  await env.RECORDINGS.delete(`index/${match[1]}/${match[2]}/${match[3]}.json`);
+  await env.RECORDINGS.delete(`ids/${id}`);
+  return json({ ok: true });
 }
 
 async function readMedia(request, env, id) {

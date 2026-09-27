@@ -13,3 +13,19 @@ fun changedFraction(previous: ByteArray, current: ByteArray, delta: Int = 18): F
     }
     return changed.toFloat() / count
 }
+
+fun recordingKind(
+    cameraOn: Boolean,
+    lastCameraMotionAt: Long,
+    lastScreenMotionAt: Long,
+    now: Long,
+    quietMs: Long,
+): String {
+    if (!cameraOn || lastCameraMotionAt <= 0L || now - lastCameraMotionAt >= quietMs) return "screen"
+    return if (lastCameraMotionAt >= lastScreenMotionAt) "camera" else "screen"
+}
+
+fun evenDimension(size: Int): Int {
+    val even = size - (size and 1)
+    return if (even >= 2) even else 0
+}

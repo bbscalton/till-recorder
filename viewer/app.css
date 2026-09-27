@@ -39,9 +39,9 @@ input { width: 100%; padding: 10px 12px; background: var(--bg); border: 1px soli
 .device small { color: var(--muted); }
 .live-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
-.pair img { width: 100%; max-height: 42vh; object-fit: contain; background: black; border-radius: 8px; }
+.pair img, .pair video { width: 100%; max-height: 42vh; object-fit: contain; background: black; border-radius: 8px; }
 .camera-off { margin: 0; min-height: 180px; display: grid; place-items: center; padding: 16px; text-align: center; background: #0c0b0a; border-radius: 8px; }
-#cameraToggle.on { background: var(--record); border-color: var(--record); color: white; }
+#cameraToggle.on, #lockToggle.on { background: var(--record); border-color: var(--record); color: white; }
 .stage { margin-top: 16px; background: black; border-radius: 8px; }
 video { width: 100%; max-height: 42vh; display: block; }
 .transport { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
@@ -49,6 +49,8 @@ video { width: 100%; max-height: 42vh; display: block; }
 .timeline { position: relative; height: 48px; margin-top: 12px; background: #2a2420; border-radius: 8px; cursor: pointer; }
 .track { position: absolute; inset: 8px 0; }
 .segment { position: absolute; top: 0; height: 100%; background: var(--footage); border-radius: 3px; }
+.segment.camera { background: #7eb6d9; }
+#deleteDay, #deleteClip { border-color: #6a4038; }
 .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: white; pointer-events: none; }
 [hidden] { display: none !important; }
 @media (max-width: 860px) {

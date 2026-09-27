@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Till Recorder</string>
-    <string name="notif_channel">Register recording</string>
+    <string name="notif_channel">Status</string>
+    <string name="notif_quiet_title">Running</string>
+    <string name="notif_quiet_text">Till Recorder</string>
     <string name="notif_title">Recording this register</string>
     <string name="notif_stop">Stop</string>
     <string name="remind_channel">Recording reminder</string>
@@ -18,6 +20,22 @@
     <string name="remind_restart">Remind me to start recording after the tablet restarts</string>
     <string name="status_idle">Not recording</string>
     <string name="pending_clear">Nothing is waiting on this tablet.</string>
-    <string name="help">On the watch website, press Pair a register and type that code here.\n\nThen turn on Till Recorder under Accessibility. You only do that once. If Android says the setting is restricted, open App info, allow restricted settings, and try again. After that, watching stays on by itself, including after a restart. A notice stays on this tablet while it is watching.\n\nFrom the website you can turn the front camera on or off.</string>
+    <string name="help">On the watch website, press Pair a register and type that code here.\n\nThen turn on Till Recorder under Accessibility. You only do that once. If Android says the setting is restricted, open App info, allow restricted settings, and try again. After that, watching starts on its own when the tablet turns on, and it keeps going if this screen is closed. Stopping it requires the PIN. A notice stays on this tablet while it is watching.\n\nFrom the website you can turn the front camera on or off, and lock the register. The register stays locked until this PIN is entered on the tablet, or you press Unlock on the watch page.</string>
+    <string name="register_lock_title">This register is locked</string>
+    <string name="register_lock_body">Enter the owner PIN to use it again.</string>
+    <string name="pin_setup_body">Set a PIN of 4 to 6 digits. Watching can only be stopped after this PIN is entered.</string>
+    <string name="pin_new">New PIN</string>
+    <string name="pin_confirm">Confirm PIN</string>
+    <string name="pin_save">Save PIN</string>
+    <string name="pin_length">Use 4 to 6 digits.</string>
+    <string name="pin_mismatch">Those PINs do not match.</string>
+    <string name="pin_saved">PIN saved. Enter it whenever you want to stop watching.</string>
+    <string name="pin_title">Enter the PIN to change this register.</string>
+    <string name="pin_hint">PIN</string>
+    <string name="pin_unlock">Unlock</string>
+    <string name="pin_wrong">Wrong PIN.</string>
+    <string name="watching_locked">Watching this register.</string>
+    <string name="stopped_locked">Watching is off.</string>
+    <string name="pin_required_stop">Set a PIN before watching can be stopped.</string>
     <string name="card_warning">A clip includes everything on the screen. Use a register that hides card numbers, and only give the token to people who should watch the day.</string>
 </resources>
