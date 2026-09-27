@@ -3,51 +3,109 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="robots" content="noindex">
-  <title>Till Recorder</title>
-  <link rel="stylesheet" href="app.css">
+  <title>Till Recorder — the register screen, beside your camera</title>
+  <meta name="description" content="Till Recorder saves what happens on a point-of-sale tablet. It records only while the screen is in use, then lets you watch it live or play the day back.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,520;9..144,640&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="site.css">
 </head>
 <body>
-  <section id="loginView" class="login">
-    <form id="loginForm" class="card">
-      <p class="eyebrow">Register viewer</p>
-      <h1>Till Recorder</h1>
-      <p class="lede">Sign in with the token from the tablet setup. Live view shows the screen while someone is using the register. Playback shows the clips from when the screen was changing.</p>
-      <label for="token">Token</label>
-      <input id="token" type="password" autocomplete="current-password" required>
-      <p id="loginError" class="error" hidden></p>
-      <button type="submit">Open recordings</button>
-    </form>
-  </section>
-  <section id="appView" class="shell" hidden>
-    <aside>
-      <p class="eyebrow">Cloudflare + GitHub</p>
-      <h1>Till Recorder</h1>
-      <div id="deviceList" class="devices"></div>
-      <label for="day">Day</label>
-      <input id="day" type="date">
-      <p id="daySize" class="hint">No clips yet.</p>
-    </aside>
-    <main>
-      <div class="live-head">
-        <h2 id="liveTitle">Live screen</h2>
-        <p id="liveState" class="hint">Idle</p>
+  <header class="top">
+    <a class="mark" href="index.html">Till<span class="dot" aria-hidden="true"></span></a>
+    <nav>
+      <a href="#how">How it works</a>
+      <a href="#install">Install</a>
+      <a class="nav-watch" href="watch.html">Watch</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="kicker">Beside the camera you already have</p>
+        <h1>See what they did on the register.</h1>
+        <p class="lead">The camera shows the counter. Till Recorder shows the screen. It saves a clip only while someone is using the tablet, then lets you watch that screen live or go back through the day.</p>
+        <div class="actions">
+          <a class="button" href="watch.html">Watch a register</a>
+          <a class="button quiet" href="#install">Install on the tablet</a>
+        </div>
       </div>
-      <img id="live" alt="Latest picture from the register screen">
-      <div class="stage">
-        <video id="player" controls playsinline></video>
+      <div class="device" aria-hidden="true">
+        <div class="bezel">
+          <div class="screen">
+            <div class="screen-bar">
+              <span>Front register</span>
+              <span class="chip">Screen active</span>
+            </div>
+            <div class="tiles">
+              <span>Coffee</span>
+              <span>Sandwich</span>
+              <span>Water</span>
+              <span>Pastry</span>
+            </div>
+            <div class="ticket">
+              <p><span>Latte</span><span>4.50</span></p>
+              <p><span>Ham sandwich</span><span>8.00</span></p>
+              <p class="total"><span>Total</span><span>12.50</span></p>
+            </div>
+          </div>
+        </div>
       </div>
-      <div class="transport">
-        <button id="playDay" type="button">Play day</button>
-        <button id="backThirty" type="button">−30 sec</button>
-        <button id="forwardThirty" type="button">+30 sec</button>
-        <p id="clock" class="clock">—</p>
+    </section>
+
+    <section class="split" id="why">
+      <article>
+        <h2>The camera keeps the person.</h2>
+        <p>You already point a camera at the cashier and the counter. That shows who was there. It does not show which button they pressed, what total they rang, or where a mistake started.</p>
+      </article>
+      <article>
+        <h2>This keeps the screen.</h2>
+        <p>Install the app on the point-of-sale tablet. When the screen changes, a clip starts. When the screen sits still, it stops. Open the site to see the live picture or replay the moment.</p>
+      </article>
+    </section>
+
+    <section class="steps" id="how">
+      <h2>How a shift gets recorded</h2>
+      <ol>
+        <li>
+          <span>01</span>
+          <h3>Put the app on the tablet</h3>
+          <p>The register phone or tablet is only for the point of sale. Install Till Recorder on that device.</p>
+        </li>
+        <li>
+          <span>02</span>
+          <h3>Arm it once</h3>
+          <p>Choose Entire screen when Android asks. After that, it watches on its own. A notice stays visible so the person at the register can see it is on.</p>
+        </li>
+        <li>
+          <span>03</span>
+          <h3>Watch from here</h3>
+          <p>Live view while the screen is in use. Playback when you need to find a mistake and see exactly what was on the display.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section class="install" id="install">
+      <div>
+        <h2>Install the tablet app</h2>
+        <p>Download the APK, open it on the Android register, and arm that device. Clips are stored in Cloudflare. This website is where you watch them.</p>
+        <a class="button" href="https://github.com/bbscalton/till-recorder/releases/download/v1.0.0/till-recorder.apk">Download the APK</a>
       </div>
-      <div id="timeline" class="timeline"><div id="track" class="track"></div><div id="playhead" class="playhead" hidden></div></div>
-      <p id="status" class="hint"></p>
-    </main>
-  </section>
-  <script src="config.js"></script>
-  <script src="app.js"></script>
+      <ul>
+        <li>Records only while the screen is changing</li>
+        <li>Sends a live picture during use</li>
+        <li>Keeps the microphone from the counter</li>
+        <li>Leaves card numbers hidden if your register already hides them</li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <p>Till Recorder</p>
+    <a href="watch.html">Watch</a>
+    <a href="https://github.com/bbscalton/till-recorder">Code</a>
+  </footer>
 </body>
 </html>

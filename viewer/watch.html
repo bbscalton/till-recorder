@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Watch — Till Recorder</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <p class="site-home"><a href="index.html">Till Recorder</a></p>
+  <section id="loginView" class="login">
+    <form id="loginForm" class="card">
+      <p class="eyebrow">Watch</p>
+      <h1>Open a register</h1>
+      <p class="lede">Sign in with the token from the tablet. The live picture shows the screen while someone is using it. Playback shows the clips from when the screen was changing.</p>
+      <label for="token">Token</label>
+      <input id="token" type="password" autocomplete="current-password" required>
+      <p id="loginError" class="error" hidden></p>
+      <button type="submit">Open recordings</button>
+    </form>
+  </section>
+  <section id="appView" class="shell" hidden>
+    <aside>
+      <p class="eyebrow">Registers</p>
+      <h1>Today</h1>
+      <div id="deviceList" class="devices"></div>
+      <label for="day">Day</label>
+      <input id="day" type="date">
+      <p id="daySize" class="hint">No clips yet.</p>
+    </aside>
+    <main>
+      <div class="live-head">
+        <h2 id="liveTitle">Live screen</h2>
+        <p id="liveState" class="hint">Idle</p>
+      </div>
+      <img id="live" alt="Latest picture from the register screen">
+      <div class="stage">
+        <video id="player" controls playsinline></video>
+      </div>
+      <div class="transport">
+        <button id="playDay" type="button">Play day</button>
+        <button id="backThirty" type="button">−30 sec</button>
+        <button id="forwardThirty" type="button">+30 sec</button>
+        <p id="clock" class="clock">—</p>
+      </div>
+      <div id="timeline" class="timeline"><div id="track" class="track"></div><div id="playhead" class="playhead" hidden></div></div>
+      <p id="status" class="hint"></p>
+    </main>
+  </section>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

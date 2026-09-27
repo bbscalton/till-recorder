@@ -11,6 +11,8 @@
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); }
+.site-home { margin: 0; padding: 16px 24px 0; }
+.site-home a { color: var(--footage); text-decoration: none; font-weight: 600; }
 button, input { font: inherit; color: inherit; }
 button { background: #2a2420; border: 1px solid #4a4038; border-radius: 6px; padding: 8px 12px; cursor: pointer; }
 .login { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; }

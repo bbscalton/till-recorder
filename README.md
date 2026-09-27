@@ -2,7 +2,7 @@
 
 Install the Android app on the register tablet. After you arm it once, it watches the screen and saves a clip only while the screen is changing, the same idea as motion detection. A still register screen is not saved. While someone is using it, a live picture is sent too.
 
-Clips are stored in Cloudflare R2. The viewer is the page in `viewer/`, published from this GitHub repo.
+Clips are stored in Cloudflare R2. The website is in `viewer/`. Open the home page, then Watch, and sign in with the token.
 
 ## Install the app
 

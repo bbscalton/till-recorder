@@ -1,0 +1,191 @@
+:root {
+  --paper: #f4efe6;
+  --ink: #1c1612;
+  --muted: #5e534a;
+  --line: #ddd4c6;
+  --red: #9f2d2d;
+  --panel: #fffaf3;
+  color-scheme: light;
+  font-family: Outfit, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+a { color: inherit; }
+
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 22px 7vw;
+  position: sticky;
+  top: 0;
+  background: rgba(244, 239, 230, 0.92);
+  backdrop-filter: blur(8px);
+  z-index: 2;
+}
+
+.mark {
+  font-family: Fraunces, Georgia, serif;
+  font-size: 28px;
+  font-weight: 640;
+  text-decoration: none;
+  letter-spacing: -0.03em;
+}
+
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--red);
+  transform: translateY(-8px);
+}
+
+nav { display: flex; gap: 22px; align-items: center; }
+nav a { text-decoration: none; font-weight: 500; }
+.nav-watch {
+  border: 1px solid var(--ink);
+  border-radius: 999px;
+  padding: 8px 14px;
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 48px;
+  align-items: center;
+  padding: 36px 7vw 72px;
+}
+
+.kicker {
+  margin: 0 0 12px;
+  color: var(--red);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 13px;
+}
+
+h1, h2, h3 { font-family: Fraunces, Georgia, serif; font-weight: 560; letter-spacing: -0.03em; }
+h1 { font-size: clamp(46px, 6vw, 78px); line-height: 0.95; margin: 0; }
+.lead { font-size: 20px; line-height: 1.45; color: var(--muted); max-width: 38rem; }
+
+.actions { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 28px; }
+.button {
+  display: inline-block;
+  background: var(--ink);
+  color: var(--paper);
+  text-decoration: none;
+  padding: 14px 18px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+.button.quiet { background: transparent; color: var(--ink); border: 1px solid var(--line); }
+
+.device { display: flex; justify-content: center; }
+.bezel {
+  width: min(420px, 100%);
+  background: #241c18;
+  border-radius: 28px;
+  padding: 16px;
+  box-shadow: 0 24px 50px rgba(40, 24, 16, 0.18);
+}
+.screen {
+  background: #f7f1e8;
+  border-radius: 16px;
+  padding: 14px;
+  color: #241c18;
+}
+.screen-bar, .ticket p, .total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.screen-bar { font-size: 13px; margin-bottom: 12px; }
+.chip {
+  background: var(--red);
+  color: white;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+.tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.tiles span {
+  background: white;
+  border-radius: 10px;
+  padding: 16px 10px;
+  text-align: center;
+  font-weight: 600;
+}
+.ticket { margin-top: 12px; background: white; border-radius: 10px; padding: 10px 12px; }
+.ticket p { margin: 6px 0; }
+.total { font-weight: 700; border-top: 1px solid var(--line); padding-top: 8px; }
+
+.split, .steps, .install { padding: 28px 7vw 72px; }
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 28px;
+}
+.split article, .install {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+}
+.split article { padding: 28px; }
+.split h2, .steps h2, .install h2 { font-size: 34px; margin: 0 0 10px; }
+.split p, .steps p, .install p { color: var(--muted); line-height: 1.5; font-size: 18px; }
+
+.steps h2 { margin-bottom: 22px; }
+.steps ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 22px;
+}
+.steps li span {
+  font-family: Fraunces, Georgia, serif;
+  color: var(--red);
+  font-size: 22px;
+}
+.steps h3 { margin: 8px 0; font-size: 26px; }
+
+.install {
+  margin: 0 7vw 72px;
+  padding: 32px;
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 24px;
+  align-items: center;
+}
+.install ul { margin: 0; padding-left: 18px; color: var(--muted); line-height: 1.7; }
+
+footer {
+  display: flex;
+  gap: 18px;
+  padding: 22px 7vw 40px;
+  color: var(--muted);
+}
+footer a { color: var(--ink); }
+
+@media (max-width: 860px) {
+  .hero, .split, .steps ol, .install { grid-template-columns: 1fr; }
+  .top { padding: 16px 20px; }
+  .hero, .split, .steps { padding-left: 20px; padding-right: 20px; }
+  .install { margin-left: 20px; margin-right: 20px; }
+  nav a:not(.nav-watch) { display: none; }
+}
