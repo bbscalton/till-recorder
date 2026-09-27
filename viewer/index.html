@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Till Recorder — the register screen, beside your camera</title>
-  <meta name="description" content="Till Recorder saves what happens on a point-of-sale tablet. It records only while the screen is in use, then lets you watch it live or play the day back.">
+  <meta name="description" content="Till Recorder saves the point-of-sale screen on an Android tablet or a Windows PC. Watch it live, or play the day back.">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -26,10 +26,10 @@
       <div class="hero-copy">
         <p class="kicker">Beside the camera you already have</p>
         <h1>See what they did on the register.</h1>
-        <p class="lead">The camera shows the counter. Till Recorder shows the screen. It saves a clip only while someone is using the tablet, then lets you watch that screen live or go back through the day.</p>
+        <p class="lead">The camera shows the counter. Till Recorder shows the register screen, on an Android tablet or a Windows point-of-sale PC. It saves a clip while someone is using the screen, then you watch that register live or play the day back.</p>
         <div class="actions">
           <a class="button" href="watch.html">Watch a register</a>
-          <a class="button quiet" href="#install">Install on the tablet</a>
+          <a class="button quiet" href="#install">Get the app</a>
         </div>
       </div>
       <div class="device" aria-hidden="true">
@@ -62,7 +62,7 @@
       </article>
       <article>
         <h2>This keeps the screen.</h2>
-        <p>Install the app on the point-of-sale tablet. When the screen changes, a clip starts. When the screen sits still, it stops. Open the site to watch live video or replay the moment.</p>
+        <p>Install it on the point-of-sale tablet, or run it on the Windows PC. When the screen changes, a clip starts. When the screen sits still, it stops. The tablet and the PC show up on the same watch page.</p>
       </article>
     </section>
 
@@ -71,36 +71,38 @@
       <ol>
         <li>
           <span>01</span>
-          <h3>Put the app on the tablet</h3>
-          <p>The register phone or tablet is only for the point of sale. Install Till Recorder on that device.</p>
+          <h3>Put it on the register</h3>
+          <p>On Android, install the APK on the tablet. On Windows, unzip the download and run TillRecorder.exe. The Windows app stays in the tray.</p>
         </li>
         <li>
           <span>02</span>
           <h3>Pair it once</h3>
-          <p>On Watch, press Pair a register and type that code into the tablet. Turn on Till Recorder in Accessibility one time. It stays on after that, including after a restart. A notice stays visible so the person at the register can see it is on.</p>
+          <p>On the watch page, press Pair a register and type that code into the tablet or the Windows app. You do not type a long token. Android captures the screen itself, so there is no system screen-share prompt. Turn on Till Recorder in Accessibility one time. It stays on after that, including after a restart, and a notice stays visible. Windows pairs with the code and records from the tray.</p>
         </li>
         <li>
           <span>03</span>
           <h3>Watch from here</h3>
-          <p>Live video of the screen, a few seconds behind the register. Turn the tablet’s front camera on from this site when you want the person and the screen together, and turn it off when you are done. Playback is the same smooth video.</p>
+          <p>Both registers appear on the same watch page. Turn the front camera or the webcam on and off from that page. Android live screen is about 3 frames a second, because the phone screenshot is that slow. The Windows desktop is smooth, about 15 to 30 frames a second or faster. The camera is real video. Delete one clip, or delete the whole day.</p>
         </li>
       </ol>
     </section>
 
     <section class="install" id="install">
       <div>
-        <h2>Install the tablet app</h2>
-        <p>Download the APK, open it on the Android register, and arm that device. On a Windows point-of-sale PC, download the Windows app, unzip it, and run TillRecorder.exe. It sits in the tray, pairs with a code from the watch page, and records the desktop and webcam. Clips are stored in Cloudflare. This website is where you watch them.</p>
-        <a class="button" href="https://github.com/bbscalton/till-recorder/releases/download/v1.5.4/till-recorder.apk">Download the APK</a>
-        <a class="button" href="https://github.com/bbscalton/till-recorder/releases/download/v1.5.4/till-recorder-windows.zip">Download for Windows</a>
+        <h2>Two downloads</h2>
+        <p>The Android APK is for the tablet. The Windows zip is for the point-of-sale PC: unzip it and run TillRecorder.exe. Pair either one with a code from the watch page. The Windows app records the desktop and the webcam and stays in the tray. Recordings upload to your Cloudflare account. This website is where you watch them.</p>
+        <div class="actions">
+          <a class="button" href="https://github.com/bbscalton/till-recorder/releases/download/v1.5.4/till-recorder.apk">Download the Android APK</a>
+          <a class="button" href="https://github.com/bbscalton/till-recorder/releases/download/v1.5.4/till-recorder-windows.zip">Download for Windows</a>
+        </div>
       </div>
       <ul>
-        <li>Connects with a pair code from the watch page</li>
-        <li>Records only while the screen is changing</li>
-        <li>Sends live video of the screen and, when you turn it on, the front camera</li>
-        <li>Front camera turns on and off from the watch page</li>
-        <li>Keeps the microphone from the counter</li>
-        <li>Leaves card numbers hidden if your register already hides them</li>
+        <li>Pairs with a code from the watch page</li>
+        <li>Records while the screen is changing</li>
+        <li>Android live screen is about 3 fps. Windows desktop is about 15–30+ fps</li>
+        <li>Front camera and webcam are real video, on and off from the watch page</li>
+        <li>Delete a clip, or delete a whole day</li>
+        <li>Card numbers can appear in a clip if the register shows them</li>
       </ul>
     </section>
   </main>

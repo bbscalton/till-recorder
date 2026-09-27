@@ -1,23 +1,26 @@
 # Till Recorder
 
-Install the Android app on the register tablet. After you arm it once, it watches the screen and saves a clip only while the screen is changing, the same idea as motion detection. A still register screen is not saved. While someone is using it, a live picture is sent too.
+Till Recorder records a point-of-sale screen and camera. The Android app runs on the register tablet. The Windows app runs on the POS PC, stays in the tray, and records the desktop and webcam. Both pair with a code from the watch page and show up on the same site.
 
-Clips are stored in Cloudflare R2. The website is in `viewer/`. Open the home page, then Watch, and sign in with the token.
+Clips upload to the owner's Cloudflare account. The website is in `viewer/`.
 
-## Install the app
+## Download
 
-The APK to install on the tablet is the download on the website, or:
+- Android APK: https://github.com/bbscalton/till-recorder/releases/download/v1.5.4/till-recorder.apk
+- Windows: https://github.com/bbscalton/till-recorder/releases/download/v1.5.4/till-recorder-windows.zip — unzip and run `TillRecorder.exe`
 
-`android/app/build/outputs/apk/debug/app-debug.apk`
+## Pair
 
-On the watch page, press **Pair a register**. On the tablet, enter the register name and that code, then tap **Connect**.
+On https://till-recorder.neuereatec.workers.dev/watch, press **Pair a register**. Enter the register name and that code. You do not type a long token.
 
-Turn on **Till Recorder** under Accessibility. You only do that once. If Android blocks it, open App info and allow restricted settings, then turn it on. Tap **Start watching**. Allow the microphone and the camera. Watching stays on after that, including after a restart. A notice stays on the tablet while it is watching.
+On Android, turn on **Till Recorder** under Accessibility once. It captures the screen itself, with no system screen-share prompt. Allow the microphone and the camera. A notice stays visible, and watching stays on after a restart.
+
+On Windows, the tray app pairs with the code and keeps running.
 
 Recording starts when the screen changes and stops about 20 seconds after the screen goes still.
 
-## Watch live or play a clip
+## Watch
 
-Open the GitHub Pages site, or the same viewer on the Cloudflare address, and sign in with the token. Pick the register. The screen and the front camera sit side by side. The front camera stays off until you press **Turn on**, and **Turn off** closes it on the tablet. The bar below is the saved clips from times the screen was active.
+Open the site and sign in. The screen and the front camera or webcam sit side by side. The camera stays off until you turn it on from the watch page. Android live screen is about 3 fps, because of the phone screenshot limit. The Windows desktop is smooth, about 15–30+ fps. The camera is real video. Delete a clip or a whole day from the watch page.
 
-The recording includes everything visible on the register. Use a point-of-sale app that hides card numbers.
+The recording includes everything visible on the register. Card numbers can appear in a clip if the point-of-sale app shows them.

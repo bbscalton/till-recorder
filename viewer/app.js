@@ -122,7 +122,7 @@ document.getElementById("pairButton").addEventListener("click", async () => {
   clearInterval(pairTimer);
   const created = await api("/api/pair-codes", { method: "POST" });
   code.textContent = created.display || created.code;
-  status.textContent = "Enter this code in Till Recorder on the tablet. It works for 10 minutes.";
+  status.textContent = "Enter this code in Till Recorder on the tablet or the Windows PC. It works for 10 minutes.";
   box.hidden = false;
   pairTimer = setInterval(async () => {
     try {
@@ -223,7 +223,7 @@ async function refreshNow() {
   if (!devices.length) {
     const empty = document.createElement("p");
     empty.className = "hint";
-    empty.textContent = "No register has checked in yet. Arm the tablet first.";
+    empty.textContent = "No register has checked in yet. Pair the tablet or the Windows app first.";
     deviceList.appendChild(empty);
   }
   for (const device of devices) {

@@ -14,7 +14,7 @@
     <form id="loginForm" class="card">
       <p class="eyebrow">Watch</p>
       <h1>Open a register</h1>
-      <p class="lede">Sign in with your token. Pair a register with a code, then the tablet connects itself. Live video shows the screen, and you can turn the front camera on so both play together.</p>
+      <p class="lede">Sign in with your token. Pair a register with a code, then the Android tablet or Windows PC connects itself. Live video shows the screen. Turn the front camera or webcam on so both play together.</p>
       <label for="token">Token</label>
       <input id="token" type="password" autocomplete="current-password" required>
       <p id="loginError" class="error" hidden></p>
@@ -28,7 +28,7 @@
       <button id="pairButton" type="button">Pair a register</button>
       <div id="pairBox" class="pair-box" hidden>
         <p id="pairCode" class="pair-code"></p>
-        <p id="pairStatus" class="hint">Enter this code in Till Recorder on the tablet.</p>
+        <p id="pairStatus" class="hint">Enter this code in Till Recorder on the tablet or the Windows PC.</p>
       </div>
       <div id="deviceList" class="devices"></div>
       <label for="day">Day</label>
@@ -48,7 +48,7 @@
         </div>
         <div>
           <div class="live-head">
-            <h2>Front camera</h2>
+            <h2>Camera</h2>
             <button id="cameraToggle" type="button">Turn on</button>
           </div>
           <video id="camera" muted autoplay playsinline hidden></video>
