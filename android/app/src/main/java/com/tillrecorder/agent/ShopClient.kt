@@ -31,10 +31,11 @@ object ShopClient {
         }
     }
 
-    fun heartbeat(settings: ShopSettings, recording: Boolean) {
-        val base = SettingsStore.normalizeBaseUrl(settings.baseUrl) ?: return
-        if (settings.token.isBlank() || settings.deviceName.isBlank()) return
-        try {
+    /** Returns whether the website wants the front camera on, or null if the check failed. */
+    fun heartbeat(settings: ShopSettings, recording: Boolean): Boolean? {
+        val base = SettingsStore.normalizeBaseUrl(settings.baseUrl) ?: return null
+        if (settings.token.isBlank() || settings.deviceName.isBlank()) return null
+        return try {
             val body = JSONObject()
                 .put("device_id", settings.deviceId)
                 .put("device_name", settings.deviceName)
@@ -46,10 +47,16 @@ object ShopClient {
             conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             conn.setFixedLengthStreamingMode(body.size)
             conn.outputStream.use { it.write(body) }
-            conn.responseCode
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader()
+                ?.use { it.readText() }
+                .orEmpty()
             conn.disconnect()
+            if (code !in 200..299) null else JSONObject(text).optBoolean("camera", false)
         } catch (error: Exception) {
             Log.w(TAG, "Heartbeat failed", error)
+            null
         }
     }
 
@@ -93,11 +100,19 @@ object ShopClient {
         }
     }
 
+    fun uploadCamera(settings: ShopSettings, jpeg: ByteArray) {
+        uploadJpeg(settings, jpeg, "/api/camera-frame")
+    }
+
     fun uploadLive(settings: ShopSettings, jpeg: ByteArray) {
+        uploadJpeg(settings, jpeg, "/api/live")
+    }
+
+    private fun uploadJpeg(settings: ShopSettings, jpeg: ByteArray, path: String) {
         val base = SettingsStore.normalizeBaseUrl(settings.baseUrl) ?: return
         if (settings.token.isBlank() || jpeg.isEmpty()) return
         try {
-            val conn = open(base, "/api/live", settings.token, "POST")
+            val conn = open(base, path, settings.token, "POST")
             conn.doOutput = true
             conn.setRequestProperty("Content-Type", "image/jpeg")
             conn.setRequestProperty("X-Device-Id", settings.deviceId)

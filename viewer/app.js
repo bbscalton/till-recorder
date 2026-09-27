@@ -2,6 +2,9 @@ const worker = (window.TILL_WORKER_URL || "").replace(/\/$/, "");
 const loginView = document.getElementById("loginView");
 const appView = document.getElementById("appView");
 const live = document.getElementById("live");
+const camera = document.getElementById("camera");
+const cameraToggle = document.getElementById("cameraToggle");
+const cameraHint = document.getElementById("cameraHint");
 const player = document.getElementById("player");
 const deviceList = document.getElementById("deviceList");
 const dayInput = document.getElementById("day");
@@ -26,8 +29,11 @@ function formatClock(ms) {
   return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit" });
 }
 
-async function api(path) {
-  const response = await fetch(`${worker}${path}`, { headers: { Authorization: `Bearer ${token}` } });
+async function api(path, options) {
+  const response = await fetch(`${worker}${path}`, {
+    ...options,
+    headers: { Authorization: `Bearer ${token}`, ...(options && options.headers) },
+  });
   if (response.status === 401) {
     token = "";
     sessionStorage.removeItem("till-token");
@@ -62,6 +68,25 @@ document.getElementById("loginForm").addEventListener("submit", async (event) =>
   showApp();
   dayInput.value = todayIso();
   await refresh();
+});
+
+cameraToggle.addEventListener("click", async () => {
+  if (!selectedId || cameraToggle.disabled) return;
+  const current = devices.find((device) => device.id === selectedId);
+  const enabled = !(current && current.camera);
+  cameraToggle.disabled = true;
+  try {
+    await api("/api/camera", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_id: selectedId, enabled }),
+    });
+    await refresh();
+  } catch (error) {
+    if (error.message !== "auth") cameraHint.textContent = "Could not change the front camera. Try again.";
+  } finally {
+    cameraToggle.disabled = !selectedId;
+  }
 });
 
 dayInput.addEventListener("change", () => loadDay());
@@ -120,8 +145,20 @@ async function refresh() {
   }
   const current = devices.find((device) => device.id === selectedId);
   liveState.textContent = current && current.recording ? "Live — someone is using the register" : "Idle — the screen is still, so nothing new is being saved";
+  const cameraOn = Boolean(current && current.camera);
+  cameraToggle.textContent = cameraOn ? "Turn off" : "Turn on";
+  cameraToggle.classList.toggle("on", cameraOn);
+  cameraToggle.disabled = !selectedId;
+  camera.hidden = !cameraOn;
+  cameraHint.hidden = cameraOn;
+  if (!cameraOn) cameraHint.textContent = "Off. Turn it on to see the person at the register beside the screen.";
   if (selectedId) {
     live.src = `${worker}/api/live/${selectedId}?access=${encodeURIComponent(token)}&t=${Date.now()}`;
+    if (cameraOn) {
+      camera.src = `${worker}/api/camera/${selectedId}?access=${encodeURIComponent(token)}&t=${Date.now()}`;
+    } else {
+      camera.removeAttribute("src");
+    }
   }
   if (dayInput.value) await loadDay();
 }

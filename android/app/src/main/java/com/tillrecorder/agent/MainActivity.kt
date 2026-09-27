@@ -151,7 +151,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun missingPermissions(): Array<String> {
-        val needed = mutableListOf(Manifest.permission.RECORD_AUDIO)
+        val needed = mutableListOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA)
         if (Build.VERSION.SDK_INT >= 33) needed.add(Manifest.permission.POST_NOTIFICATIONS)
         return needed.filterNot { hasPermission(it) }.toTypedArray()
     }

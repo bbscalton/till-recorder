@@ -14,7 +14,7 @@
     <form id="loginForm" class="card">
       <p class="eyebrow">Watch</p>
       <h1>Open a register</h1>
-      <p class="lede">Sign in with the token from the tablet. The live picture shows the screen while someone is using it. Playback shows the clips from when the screen was changing.</p>
+      <p class="lede">Sign in with the token from the tablet. The live picture shows the screen while someone is using it, and you can turn the front camera on so both show together. Playback shows the clips from when the screen was changing.</p>
       <label for="token">Token</label>
       <input id="token" type="password" autocomplete="current-password" required>
       <p id="loginError" class="error" hidden></p>
@@ -31,11 +31,23 @@
       <p id="daySize" class="hint">No clips yet.</p>
     </aside>
     <main>
-      <div class="live-head">
-        <h2 id="liveTitle">Live screen</h2>
-        <p id="liveState" class="hint">Idle</p>
+      <div class="pair">
+        <div>
+          <div class="live-head">
+            <h2 id="liveTitle">Register screen</h2>
+            <p id="liveState" class="hint">Idle</p>
+          </div>
+          <img id="live" alt="Latest picture from the register screen">
+        </div>
+        <div>
+          <div class="live-head">
+            <h2>Front camera</h2>
+            <button id="cameraToggle" type="button">Turn on</button>
+          </div>
+          <img id="camera" alt="Front camera on the register" hidden>
+          <p id="cameraHint" class="camera-off">Off. Turn it on to see the person at the register beside the screen.</p>
+        </div>
       </div>
-      <img id="live" alt="Latest picture from the register screen">
       <div class="stage">
         <video id="player" controls playsinline></video>
       </div>

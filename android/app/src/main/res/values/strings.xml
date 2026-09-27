@@ -16,6 +16,6 @@
     <string name="remind_restart">Remind me to start recording after the tablet restarts</string>
     <string name="status_idle">Not recording</string>
     <string name="pending_clear">Nothing is waiting on this tablet.</string>
-    <string name="help">Arm this once, then open the register app. A clip starts only when the screen changes, and it stops again after the screen sits still. A live picture is sent while someone is using it.\n\nWhen Android asks what to share, choose Entire screen.\n\nA notice stays on this tablet while it is watching.</string>
+    <string name="help">Arm this once, then open the register app. A clip starts only when the screen changes, and it stops again after the screen sits still. A live picture is sent while someone is using it.\n\nWhen Android asks what to share, choose Entire screen, and allow the camera. From the website you can turn the front camera on or off. While it is on, the screen and the front camera show together, and a notice stays on this tablet.</string>
     <string name="card_warning">A clip includes everything on the screen. Use a register that hides card numbers, and only give the token to people who should watch the day.</string>
 </resources>

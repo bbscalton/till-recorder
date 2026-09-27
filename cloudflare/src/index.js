@@ -33,6 +33,11 @@ async function handleApi(request, env, url) {
   if (request.method === "GET" && url.pathname.startsWith("/api/live/")) {
     return readLive(env, decodeURIComponent(url.pathname.slice("/api/live/".length)));
   }
+  if (request.method === "POST" && url.pathname === "/api/camera") return setCamera(request, env);
+  if (request.method === "POST" && url.pathname === "/api/camera-frame") return saveCamera(request, env);
+  if (request.method === "GET" && url.pathname.startsWith("/api/camera/")) {
+    return readCamera(env, decodeURIComponent(url.pathname.slice("/api/camera/".length)));
+  }
   if (request.method === "POST" && url.pathname === "/api/segments") return saveSegment(request, env);
   if (request.method === "GET" && url.pathname.startsWith("/api/media/")) {
     return readMedia(request, env, url.pathname.slice("/api/media/".length));
@@ -66,7 +71,8 @@ async function heartbeat(request, env) {
     recording: Boolean(body.recording),
     lastSeen: Date.now(),
   });
-  return json({ ok: true });
+  const control = await readControl(env, body.device_id);
+  return json({ ok: true, camera: Boolean(control.camera) });
 }
 
 async function saveLive(request, env) {
@@ -78,6 +84,47 @@ async function saveLive(request, env) {
   });
   await writeStatus(env, { id: deviceId, name, recording: true, lastSeen: Date.now() });
   return json({ ok: true });
+}
+
+async function setCamera(request, env) {
+  const body = await request.json();
+  const deviceId = body.device_id || "";
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  const camera = Boolean(body.enabled);
+  await env.RECORDINGS.put(`control/${deviceId}.json`, JSON.stringify({ camera }), {
+    httpMetadata: { contentType: "application/json" },
+  });
+  if (!camera) await env.RECORDINGS.delete(`camera/${deviceId}.jpg`);
+  return json({ ok: true, camera });
+}
+
+async function saveCamera(request, env) {
+  const deviceId = request.headers.get("X-Device-Id") || "";
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  const control = await readControl(env, deviceId);
+  if (!control.camera) return json({ ok: true, ignored: true });
+  const length = Number(request.headers.get("Content-Length") || "0");
+  if (length < 500 || length > 2 * 1024 * 1024) return json({ error: "Picture is not valid" }, 400);
+  await env.RECORDINGS.put(`camera/${deviceId}.jpg`, request.body, {
+    httpMetadata: { contentType: "image/jpeg" },
+  });
+  return json({ ok: true });
+}
+
+async function readCamera(env, deviceId) {
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Not found" }, 404);
+  const object = await env.RECORDINGS.get(`camera/${deviceId}.jpg`);
+  if (!object) return json({ error: "Front camera is off" }, 404);
+  const headers = new Headers(cors);
+  headers.set("Content-Type", "image/jpeg");
+  headers.set("Cache-Control", "no-store");
+  return new Response(object.body, { headers });
+}
+
+async function readControl(env, deviceId) {
+  const object = await env.RECORDINGS.get(`control/${deviceId}.json`);
+  if (!object) return { camera: false };
+  return object.json();
 }
 
 async function readLive(env, deviceId) {
@@ -129,6 +176,12 @@ async function listDevices(env) {
     if (!object) continue;
     const device = await object.json();
     device.recording = Boolean(device.recording) && Date.now() - Number(device.lastSeen || 0) < 90_000;
+    if (DEVICE_ID.test(device.id || "")) {
+      const control = await readControl(env, device.id);
+      device.camera = Boolean(control.camera);
+    } else {
+      device.camera = false;
+    }
     devices.push(device);
   }
   devices.sort((a, b) => String(a.name).localeCompare(String(b.name)));

@@ -8,6 +8,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
@@ -55,6 +56,10 @@ class RecordingService : Service() {
     private var lastSampleAt = 0L
     private var lastLiveAt = 0L
     private var segmentBusy = false
+    private var frontCamera: FrontCamera? = null
+    private var cameraOn = false
+    private var cameraPermissionNoted = false
+    private var cameraWake: PowerManager.WakeLock? = null
 
     private val screenReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -88,10 +93,21 @@ class RecordingService : Service() {
     private val beat = object : Runnable {
         override fun run() {
             if (!running || stopRequested.get()) return
-            val settings = store.current()
-            net.execute { ShopClient.heartbeat(settings, active != null) }
             UploadWorker.enqueue(this@RecordingService)
             handler.postDelayed(this, 60_000)
+        }
+    }
+
+    private val command = object : Runnable {
+        override fun run() {
+            if (!running || stopRequested.get()) return
+            val settings = store.current()
+            val capturing = active != null
+            net.execute {
+                val wanted = ShopClient.heartbeat(settings, capturing)
+                if (wanted != null) handler.post { applyCamera(wanted) }
+            }
+            handler.postDelayed(this, 5_000)
         }
     }
 
@@ -149,6 +165,7 @@ class RecordingService : Service() {
         handler.removeCallbacksAndMessages(null)
         running = false
         endSegment(continueRecording = false)
+        releaseFront()
         releaseWatch()
         releaseProjection()
         releaseWake()
@@ -183,8 +200,8 @@ class RecordingService : Service() {
             stopRequested.set(false)
             running = true
             publish("Watching. A clip starts when the screen changes.")
-            net.execute { ShopClient.heartbeat(store.current(), false) }
             handler.post { startWatching() }
+            handler.post(command)
             handler.postDelayed(beat, 60_000)
         } catch (error: Exception) {
             Log.e(TAG, "Could not start capture", error)
@@ -362,8 +379,10 @@ class RecordingService : Service() {
         if (!stopRequested.compareAndSet(false, true)) return
         running = false
         handler.removeCallbacks(beat)
+        handler.removeCallbacks(command)
         handler.post {
             endSegment(continueRecording = false)
+            releaseFront()
             releaseWatch()
             releaseProjection()
             releaseWake()
@@ -378,6 +397,7 @@ class RecordingService : Service() {
         stopRequested.set(true)
         running = false
         publish(message)
+        releaseFront()
         releaseWatch()
         releaseProjection()
         releaseWake()
@@ -459,16 +479,88 @@ class RecordingService : Service() {
         if (lock.isHeld) lock.release()
     }
 
+    private fun applyCamera(wanted: Boolean) {
+        if (!running || stopRequested.get()) return
+        if (wanted == cameraOn) {
+            if (cameraOn) holdCameraWake()
+            return
+        }
+        if (wanted) {
+            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                if (!cameraPermissionNoted) {
+                    cameraPermissionNoted = true
+                    publish("Front camera was turned on from the website. Open Till Recorder and allow the camera.")
+                }
+                return
+            }
+            cameraPermissionNoted = false
+            cameraOn = true
+            startInForeground("Front camera is on, next to the register screen.")
+            holdCameraWake()
+            ensureFront().start()
+            publish("Front camera is on. The website shows it beside the screen.")
+        } else {
+            frontCamera?.stop()
+            cameraOn = false
+            releaseCameraWake()
+            startInForeground(
+                if (active != null) "Recording this register." else "Watching. A clip starts when the screen changes."
+            )
+            publish("Front camera is off.")
+        }
+    }
+
+    private fun ensureFront(): FrontCamera {
+        val existing = frontCamera
+        if (existing != null) return existing
+        val created = FrontCamera(this) { jpeg ->
+            val settings = store.current()
+            net.execute { ShopClient.uploadCamera(settings, jpeg) }
+        }
+        frontCamera = created
+        return created
+    }
+
+    private fun releaseFront() {
+        cameraOn = false
+        frontCamera?.shutdown()
+        frontCamera = null
+        releaseCameraWake()
+    }
+
+    private fun holdCameraWake() {
+        val power = getSystemService(PowerManager::class.java)
+        val lock = cameraWake ?: power.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "tillrecorder:camera"
+        ).also {
+            it.setReferenceCounted(false)
+            cameraWake = it
+        }
+        if (!lock.isHeld) lock.acquire(30 * 60 * 1000L)
+    }
+
+    private fun releaseCameraWake() {
+        val lock = cameraWake ?: return
+        if (lock.isHeld) lock.release()
+    }
+
     private fun startInForeground(text: String) {
-        val type = when {
-            Build.VERSION.SDK_INT >= 30 ->
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            Build.VERSION.SDK_INT >= 29 -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-            else -> 0
+        var type = 0
+        if (Build.VERSION.SDK_INT >= 29) {
+            type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        }
+        if (Build.VERSION.SDK_INT >= 30) {
+            type = type or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        }
+        if (cameraOn && Build.VERSION.SDK_INT >= 34) {
+            type = type or cameraForegroundType()
         }
         ServiceCompat.startForeground(this, NOTIF_ID, notification(text), type)
     }
+
+    @RequiresApi(34)
+    private fun cameraForegroundType(): Int = ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
 
     private fun notification(text: String): Notification {
         val stop = PendingIntent.getService(
@@ -485,7 +577,13 @@ class RecordingService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_record)
-            .setContentTitle(if (active != null) "Recording this register" else "Watching this register")
+            .setContentTitle(
+                when {
+                    cameraOn -> "Front camera is on"
+                    active != null -> "Recording this register"
+                    else -> "Watching this register"
+                }
+            )
             .setContentText(text)
             .setContentIntent(open)
             .setOngoing(true)

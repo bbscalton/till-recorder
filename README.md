@@ -16,12 +16,12 @@ On the tablet, enter:
 - Cloudflare address (printed when the recorder is deployed)
 - Token
 
-Tap **Test connection**, then **Arm this register**. When Android asks what to share, choose **Entire screen** and allow the microphone. Then open the point-of-sale app.
+Tap **Test connection**, then **Arm this register**. When Android asks what to share, choose **Entire screen** and allow the microphone and the camera. Then open the point-of-sale app.
 
 A notice stays on the tablet while it is watching. Recording starts when the screen changes and stops about 20 seconds after the screen goes still.
 
 ## Watch live or play a clip
 
-Open the GitHub Pages site, or the same viewer on the Cloudflare address, and sign in with the token. Pick the register. The top picture is the live screen while it is in use. The bar below is the saved clips from times the screen was active.
+Open the GitHub Pages site, or the same viewer on the Cloudflare address, and sign in with the token. Pick the register. The screen and the front camera sit side by side. The front camera stays off until you press **Turn on**, and **Turn off** closes it on the tablet. The bar below is the saved clips from times the screen was active.
 
 The recording includes everything visible on the register. Use a point-of-sale app that hides card numbers.
