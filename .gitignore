@@ -1,0 +1,14 @@
+nvr/data/
+cloudflare/.wrangler/
+cloudflare/node_modules/
+cloudflare/.tokens
+
+nvr/.venv/
+**/__pycache__/
+*.pyc
+android/.gradle/
+android/local.properties
+android/**/build/
+android/.idea/
+*.iml
+.DS_Store

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Till Recorder</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <section id="loginView" class="login">
+    <form id="loginForm" class="card">
+      <p class="eyebrow">Shop computer</p>
+      <h1>Till Recorder</h1>
+      <p class="lede">Sign in with the token printed when this recorder started. Then pick a register and a time of day.</p>
+      <label for="token">Token</label>
+      <input id="token" name="token" type="password" autocomplete="current-password" required>
+      <p id="loginError" class="error" hidden></p>
+      <button type="submit">Open recordings</button>
+    </form>
+  </section>
+
+  <section id="appView" class="shell" hidden>
+    <aside>
+      <p class="eyebrow">Shop computer</p>
+      <h1>Till Recorder</h1>
+      <p class="hint">Pick a register, then a day. Click the bar or type a time to see what happened.</p>
+      <div id="deviceList" class="devices"></div>
+      <label for="day">Day</label>
+      <input id="day" type="date">
+      <p id="daySize" class="hint">No clips yet.</p>
+      <button id="deleteDay" class="danger" type="button">Delete this day</button>
+      <button id="logout" class="texty" type="button">Sign out</button>
+    </aside>
+    <main>
+      <div class="stage">
+        <video id="player" controls playsinline></video>
+        <div id="gap" class="gap" hidden>
+          <p id="gapText"></p>
+          <button id="gapNext" type="button" hidden>Play the next clip</button>
+        </div>
+      </div>
+      <div class="transport">
+        <button id="playDay" type="button">Play day</button>
+        <button id="backFive" type="button">−5 min</button>
+        <button id="backThirty" type="button">−30 sec</button>
+        <button id="forwardThirty" type="button">+30 sec</button>
+        <button id="forwardFive" type="button">+5 min</button>
+        <div class="speeds" role="group" aria-label="Playback speed">
+          <button type="button" data-rate="1">1×</button>
+          <button type="button" data-rate="2">2×</button>
+          <button type="button" data-rate="4">4×</button>
+          <button type="button" data-rate="8">8×</button>
+        </div>
+        <p id="clock" class="clock">—</p>
+      </div>
+      <div class="jump">
+        <label for="jumpTime">Go to time</label>
+        <input id="jumpTime" type="time" step="1">
+        <button id="jumpBtn" type="button">Go</button>
+        <p class="hint">Sound is the tablet microphone. Arrows jump 30 seconds. Faster than 1× is silent.</p>
+      </div>
+      <div id="timeline" class="timeline">
+        <div id="track" class="track"></div>
+        <div id="playhead" class="playhead" hidden></div>
+        <div id="nowMarker" class="now" hidden></div>
+      </div>
+      <div id="hours" class="hours"></div>
+      <p id="status" class="hint" aria-live="polite"></p>
+    </main>
+  </section>
+  <script src="/static/app.js"></script>
+</body>
+</html>

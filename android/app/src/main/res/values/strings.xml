@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Till Recorder</string>
+    <string name="notif_channel">Register recording</string>
+    <string name="notif_title">Recording this register</string>
+    <string name="notif_stop">Stop</string>
+    <string name="remind_channel">Recording reminder</string>
+    <string name="remind_title">Start register recording</string>
+    <string name="remind_text">Tap to arm this register. It records only while the screen is being used.</string>
+    <string name="register_name">Register name</string>
+    <string name="server_url">Cloudflare address</string>
+    <string name="token">Token</string>
+    <string name="start">Arm this register</string>
+    <string name="stop">Stop watching</string>
+    <string name="test_connection">Test connection</string>
+    <string name="remind_restart">Remind me to start recording after the tablet restarts</string>
+    <string name="status_idle">Not recording</string>
+    <string name="pending_clear">Nothing is waiting on this tablet.</string>
+    <string name="help">Arm this once, then open the register app. A clip starts only when the screen changes, and it stops again after the screen sits still. A live picture is sent while someone is using it.\n\nWhen Android asks what to share, choose Entire screen.\n\nA notice stays on this tablet while it is watching.</string>
+    <string name="card_warning">A clip includes everything on the screen. Use a register that hides card numbers, and only give the token to people who should watch the day.</string>
+</resources>

@@ -1,0 +1,18 @@
+{
+  "name": "till-recorder",
+  "main": "src/index.js",
+  "compatibility_date": "2026-09-27",
+  "account_id": "2aba2de5418ac0812383b628b6cb0f77",
+  "workers_dev": true,
+  "assets": {
+    "directory": "../viewer",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "r2_buckets": [
+    {
+      "binding": "RECORDINGS",
+      "bucket_name": "till-recorder"
+    }
+  ]
+}
