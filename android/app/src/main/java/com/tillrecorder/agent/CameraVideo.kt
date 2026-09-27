@@ -42,6 +42,11 @@ class CameraVideo(
     private var encoder: SurfaceEncoder? = null
     private var previous: ByteArray? = null
     private var motionReader = true
+    private var previewRotation = 0
+    private var previewFrames = 0
+    private var previewFpsAt = 0L
+    @Volatile var previewEnabled = false
+    @Volatile var onPreview: ((width: Int, height: Int, rotation: Int, y: ByteArray, u: ByteArray, v: ByteArray) -> Unit)? = null
 
     fun start() {
         handler.post {
@@ -93,11 +98,12 @@ class CameraVideo(
         }
         val size = pickSize(map.getOutputSizes(android.graphics.SurfaceTexture::class.java)?.toList().orEmpty())
         val rotation = videoRotation(characteristics)
+        previewRotation = rotation
         val created = SurfaceEncoder(size.width, size.height, 1_200_000, rotation, false, onChunk)
         val surface = created.start()
         encoder = created
         Log.i(TAG, "Camera video ${size.width}x${size.height} at ${RecorderConfig.FRAME_RATE} fps")
-        val motionSize = pickMotion(map.getOutputSizes(ImageFormat.YUV_420_888)?.toList().orEmpty())
+        val motionSize = pickPreview(map.getOutputSizes(ImageFormat.YUV_420_888)?.toList().orEmpty())
         val imageReader = if (motionSize != null) {
             ImageReader.newInstance(motionSize.width, motionSize.height, ImageFormat.YUV_420_888, 2)
         } else {
@@ -237,13 +243,16 @@ class CameraVideo(
         val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
         val ranges = manager.getCameraCharacteristics(id)
             .get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: return null
-        return ranges.filter { it.lower >= RecorderConfig.FRAME_RATE }.minByOrNull { it.upper }
+        return ranges.filter { it.lower <= 24 && it.upper >= 24 }.minByOrNull { it.upper - it.lower }
+            ?: ranges.filter { it.lower >= RecorderConfig.FRAME_RATE }.minByOrNull { it.upper }
             ?: ranges.maxByOrNull { it.upper }
     }
 
     private fun onImage(source: ImageReader) {
         val image = source.acquireLatestImage() ?: return
         try {
+            notePreviewRate()
+            deliverPreview(image)
             val luma = ySample(image)
             val prior = previous
             previous = luma
@@ -281,6 +290,69 @@ class CameraVideo(
             .filter { max(it.width, it.height) in 640..1280 }
             .minByOrNull { abs(max(it.width, it.height) - 960) }
             ?: pool.minBy { abs(max(it.width, it.height) - 960) }
+    }
+
+    private fun notePreviewRate() {
+        previewFrames += 1
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (previewFpsAt == 0L) previewFpsAt = now
+        val elapsed = now - previewFpsAt
+        if (elapsed < 5_000) return
+        val fps = previewFrames * 1000.0 / elapsed
+        val interval = elapsed.toDouble() / previewFrames
+        Log.i(TAG, "Camera capture %.1f fps, frame interval %.0f ms".format(fps, interval))
+        previewFrames = 0
+        previewFpsAt = now
+    }
+
+    private fun deliverPreview(image: Image) {
+        val listener = onPreview
+        if (!previewEnabled || listener == null) return
+        val width = image.width
+        val height = image.height
+        if (width < 2 || height < 2 || width % 2 != 0 || height % 2 != 0) return
+        if (image.planes.size < 3) return
+        try {
+            val y = copyPlane(image.planes[0], width, height)
+            val u = copyPlane(image.planes[1], width / 2, height / 2)
+            val v = copyPlane(image.planes[2], width / 2, height / 2)
+            listener(width, height, previewRotation, y, u, v)
+        } catch (error: Exception) {
+            Log.w(TAG, "Camera preview copy failed", error)
+        }
+    }
+
+    private fun copyPlane(plane: Image.Plane, width: Int, height: Int): ByteArray {
+        val buffer = plane.buffer
+        val rowStride = plane.rowStride.coerceAtLeast(1)
+        val pixelStride = plane.pixelStride.coerceAtLeast(1)
+        val out = ByteArray(width * height)
+        val dup = buffer.duplicate()
+        dup.position(0)
+        if (pixelStride == 1) {
+            val bytes = ByteArray(dup.remaining())
+            dup.get(bytes)
+            for (row in 0 until height) {
+                val start = row * rowStride
+                if (start + width > bytes.size) break
+                System.arraycopy(bytes, start, out, row * width, width)
+            }
+            return out
+        }
+        for (row in 0 until height) {
+            for (col in 0 until width) {
+                val index = row * rowStride + col * pixelStride
+                if (index >= 0 && index < dup.limit()) out[row * width + col] = dup.get(index)
+            }
+        }
+        return out
+    }
+
+    private fun pickPreview(sizes: List<Size>): Size? {
+        val even = sizes.filter { it.width % 2 == 0 && it.height % 2 == 0 }
+        val preview = even.filter { it.width in 480..960 && it.height in 360..720 }
+        return preview.minByOrNull { abs(it.width - 640) + abs(it.height - 480) }
+            ?: pickMotion(even.ifEmpty { sizes })
     }
 
     private fun pickMotion(sizes: List<Size>): Size? {

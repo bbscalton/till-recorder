@@ -10,19 +10,72 @@ const cors = {
 };
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") return new Response(null, { headers: cors });
     const url = new URL(request.url);
     if (url.pathname.startsWith("/api/")) {
-      return handleApi(request, env, url);
+      return handleApi(request, env, url, ctx);
     }
     return env.ASSETS.fetch(request);
   },
 };
 
+export class LiveRelay {
+  constructor(ctx) {
+    this.ctx = ctx;
+    this.viewers = new Set();
+    this.init = null;
+    this.codec = "avc1.42E01E";
+    this.recent = [];
+  }
+
+  async fetch(request) {
+    if (request.headers.get("Upgrade") === "websocket") {
+      const pair = new WebSocketPair();
+      const client = pair[0];
+      const server = pair[1];
+      server.accept();
+      this.viewers.add(server);
+      const drop = () => this.viewers.delete(server);
+      server.addEventListener("close", drop);
+      server.addEventListener("error", drop);
+      if (this.init) this.sendPair(server, { type: "init", codec: this.codec, seq: 0 }, this.init.slice(0));
+      const backlog = [...this.recent].sort((a, b) => a.meta.seq - b.meta.seq);
+      for (const item of backlog) this.sendPair(server, item.meta, item.bytes.slice(0));
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    if (request.method !== "POST") return new Response("Not found", { status: 404 });
+    const seq = Number(request.headers.get("X-Stream-Seq"));
+    const codec = request.headers.get("X-Stream-Codec") || this.codec;
+    const bytes = await request.arrayBuffer();
+    if (!bytes.byteLength) return new Response("ok");
+    this.codec = codec;
+    const meta = { type: seq === 0 ? "init" : "media", codec, seq };
+    const stored = bytes.slice(0);
+    if (seq === 0) {
+      this.init = stored;
+      this.recent = [];
+    } else {
+      this.recent.push({ meta, bytes: stored });
+      if (this.recent.length > 90) this.recent.shift();
+    }
+    for (const viewer of this.viewers) this.sendPair(viewer, meta, stored.slice(0));
+    return new Response("ok");
+  }
+
+  sendPair(socket, meta, bytes) {
+    try {
+      socket.send(JSON.stringify(meta));
+      socket.send(bytes);
+    } catch (error) {
+      this.viewers.delete(socket);
+    }
+  }
+}
+
 const PAIR_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 
-async function handleApi(request, env, url) {
+async function handleApi(request, env, url, ctx) {
   if (request.method === "POST" && url.pathname === "/api/pair") return claimPair(request, env);
   if (!authorized(request, env)) {
     return json({ error: "Sign in" }, 401);
@@ -37,11 +90,14 @@ async function handleApi(request, env, url) {
   if (request.method === "GET" && url.pathname === "/api/segments") return listSegments(env, url);
   if (request.method === "POST" && url.pathname === "/api/heartbeat") return heartbeat(request, env);
   if (request.method === "POST" && url.pathname === "/api/live") return saveLive(request, env);
-  if (request.method === "POST" && url.pathname === "/api/stream") return saveStream(request, env);
+  if (request.method === "POST" && url.pathname === "/api/stream") return saveStream(request, env, ctx);
+  if (request.method === "GET" && url.pathname === "/api/live-ws") return openLive(request, env, url);
   if (request.method === "GET" && url.pathname.startsWith("/api/stream/")) return readStream(env, url);
   if (request.method === "GET" && url.pathname.startsWith("/api/live/")) {
     return readLive(env, decodeURIComponent(url.pathname.slice("/api/live/".length)));
   }
+  if (request.method === "GET" && url.pathname === "/api/rtc") return readRtc(env, url);
+  if (request.method === "POST" && url.pathname === "/api/rtc") return writeRtc(request, env);
   if (request.method === "POST" && url.pathname === "/api/camera") return setCamera(request, env);
   if (request.method === "POST" && url.pathname === "/api/lock") return setLock(request, env);
   if (request.method === "POST" && url.pathname === "/api/camera-frame") return saveCamera(request, env);
@@ -174,7 +230,31 @@ async function heartbeat(request, env) {
   });
 }
 
-async function saveStream(request, env) {
+async function openLive(request, env, url) {
+  const deviceId = url.searchParams.get("device_id") || "";
+  const kind = url.searchParams.get("kind") || "";
+  if (!DEVICE_ID.test(deviceId) || (kind !== "screen" && kind !== "camera")) {
+    return json({ error: "Not found" }, 404);
+  }
+  if (!env.LIVE_RELAY) return json({ error: "Live relay is not ready" }, 503);
+  const stub = env.LIVE_RELAY.get(env.LIVE_RELAY.idFromName(`${deviceId}:${kind}`));
+  return stub.fetch(request);
+}
+
+async function pushLive(env, deviceId, kind, seq, codec, body) {
+  if (!env.LIVE_RELAY || !body.byteLength) return;
+  const stub = env.LIVE_RELAY.get(env.LIVE_RELAY.idFromName(`${deviceId}:${kind}`));
+  const payload = body.slice(0);
+  const send = (bytes) => stub.fetch("https://live/push", {
+    method: "POST",
+    headers: { "X-Stream-Seq": String(seq), "X-Stream-Codec": codec },
+    body: bytes,
+  });
+  let response = await send(payload.slice(0)).catch(() => null);
+  if (!response || !response.ok) response = await send(payload.slice(0)).catch(() => null);
+}
+
+async function saveStream(request, env, ctx) {
   const deviceId = request.headers.get("X-Device-Id") || "";
   if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
   const kind = request.headers.get("X-Stream-Kind") || "";
@@ -186,13 +266,22 @@ async function saveStream(request, env) {
   if (body.byteLength < 8 || body.byteLength > 4_000_000) return json({ error: "Stream is not valid" }, 400);
   const base = `stream/${deviceId}/${kind}`;
   const key = seq === 0 ? `${base}/init` : `${base}/${seq}`;
-  await env.RECORDINGS.put(key, body, { httpMetadata: { contentType: "video/mp4" } });
-  await env.RECORDINGS.put(`${base}/head.json`, JSON.stringify({
-    seq,
-    codec,
-    updatedAt: Date.now(),
-  }), { httpMetadata: { contentType: "application/json" } });
-  if (seq > 24) await env.RECORDINGS.delete(`${base}/${seq - 24}`);
+  const relayBody = body.slice(0);
+  const archiveBody = body.slice(0);
+  const forwarded = pushLive(env, deviceId, kind, seq, codec, relayBody);
+  const archived = (async () => {
+    await env.RECORDINGS.put(key, archiveBody, { httpMetadata: { contentType: "video/mp4" } });
+    await env.RECORDINGS.put(`${base}/head.json`, JSON.stringify({
+      seq,
+      codec,
+      updatedAt: Date.now(),
+    }), { httpMetadata: { contentType: "application/json" } });
+    if (seq > 90) await env.RECORDINGS.delete(`${base}/${seq - 90}`);
+  })();
+  if (seq === 0) await archived;
+  else if (ctx) ctx.waitUntil(archived);
+  else await archived;
+  await forwarded;
   return json({ ok: true });
 }
 
@@ -387,32 +476,36 @@ async function listSegments(env, url) {
   if (!DEVICE_ID.test(deviceId) || !DAY.test(date)) return json({ error: "Not valid" }, 400);
   const objects = await listAll(env, `index/${deviceId}/${date}/`);
   const segments = [];
-  for (const item of objects) {
-    const object = await env.RECORDINGS.get(item.key);
-    if (object) segments.push(await object.json());
+  for (let index = 0; index < objects.length; index += 16) {
+    const rows = await Promise.all(objects.slice(index, index + 16).map(async (item) => {
+      const object = await env.RECORDINGS.get(item.key);
+      return object ? object.json() : null;
+    }));
+    for (const row of rows) if (row) segments.push(row);
   }
   segments.sort((a, b) => a.startedAtMs - b.startedAtMs);
   const total = segments.reduce((sum, segment) => sum + Number(segment.bytes || 0), 0);
-  return json({ deviceId, date, totalBytes: total, segments });
+  return json({ deviceId, date, totalBytes: total, segments }, 200, true);
 }
 
 async function deleteDay(env, url) {
   const deviceId = url.searchParams.get("device_id") || "";
   const date = url.searchParams.get("date") || "";
   if (!DEVICE_ID.test(deviceId) || !DAY.test(date)) return json({ error: "Not valid" }, 400);
-  const objects = await listAll(env, `index/${deviceId}/${date}/`);
-  let removed = 0;
-  for (const item of objects) {
-    const object = await env.RECORDINGS.get(item.key);
-    if (object) {
-      const segment = await object.json();
-      if (String(segment.key || "").startsWith("clips/")) await env.RECORDINGS.delete(segment.key);
-      if (SEGMENT_ID.test(segment.id || "")) await env.RECORDINGS.delete(`ids/${segment.id}`);
-    }
-    await env.RECORDINGS.delete(item.key);
-    removed += 1;
+  const [indexes, clips] = await Promise.all([
+    listAll(env, `index/${deviceId}/${date}/`),
+    listAll(env, `clips/${deviceId}/${date}/`),
+  ]);
+  const keys = [];
+  for (const item of indexes) {
+    keys.push(item.key);
+    const name = item.key.split("/").pop() || "";
+    const id = name.endsWith(".json") ? name.slice(0, -5) : "";
+    if (SEGMENT_ID.test(id)) keys.push(`ids/${id}`);
   }
-  return json({ ok: true, removed });
+  for (const item of clips) keys.push(item.key);
+  await deleteKeys(env, keys);
+  return json({ ok: true, removed: indexes.length }, 200, true);
 }
 
 async function deleteSegment(env, rawId) {
@@ -423,10 +516,8 @@ async function deleteSegment(env, rawId) {
   const key = (await pointer.text()).trim();
   const match = /^clips\/([^/]+)\/(\d{4}-\d{2}-\d{2})\/([a-f0-9]{32})\.mp4$/.exec(key);
   if (!match) return json({ error: "Not found" }, 404);
-  await env.RECORDINGS.delete(key);
-  await env.RECORDINGS.delete(`index/${match[1]}/${match[2]}/${match[3]}.json`);
-  await env.RECORDINGS.delete(`ids/${id}`);
-  return json({ ok: true });
+  await deleteKeys(env, [key, `index/${match[1]}/${match[2]}/${match[3]}.json`, `ids/${id}`]);
+  return json({ ok: true }, 200, true);
 }
 
 async function readMedia(request, env, id) {
@@ -446,7 +537,7 @@ async function rangedObject(request, env, key, contentType) {
   const headers = new Headers(cors);
   headers.set("Content-Type", contentType);
   headers.set("Accept-Ranges", "bytes");
-  headers.set("Cache-Control", "private, max-age=86400");
+  headers.set("Cache-Control", "private, no-store");
   if (range) {
     const match = /bytes=(\d+)-(\d*)/.exec(range);
     if (!match) return new Response(null, { status: 416, headers });
@@ -509,9 +600,138 @@ function cleanName(name) {
   return cleaned || "Register";
 }
 
-function json(body, status = 200) {
+const RTC_KIND = /^(screen|camera)$/;
+const RTC_SESSION = /^[a-zA-Z0-9]{16,64}$/;
+
+function rtcJson(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "Content-Type": "application/json", ...cors },
+    headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...cors },
   });
+}
+
+function emptyRtc() {
+  return { session: "", offer: null, answer: null, viewerIce: [], phoneIce: [], updatedAt: 0 };
+}
+
+function normalizeDesc(value, expected) {
+  if (!value || typeof value !== "object") return null;
+  const type = String(value.type || "");
+  const sdp = String(value.sdp || "");
+  if (type !== expected || sdp.length < 20 || sdp.length > 50000) return null;
+  return { type, sdp };
+}
+
+function normalizeIce(value) {
+  if (!Array.isArray(value)) return [];
+  const ice = [];
+  for (const item of value.slice(0, 40)) {
+    if (!item || typeof item !== "object") continue;
+    const candidate = String(item.candidate || "");
+    if (!candidate.startsWith("candidate:") || candidate.length > 2000) continue;
+    const index = Number(item.sdpMLineIndex);
+    ice.push({
+      candidate,
+      sdpMid: item.sdpMid == null ? null : String(item.sdpMid).slice(0, 32),
+      sdpMLineIndex: Number.isInteger(index) && index >= 0 && index < 8 ? index : 0,
+    });
+  }
+  return ice;
+}
+
+async function readRtcKind(env, deviceId, kind) {
+  const base = `rtc/${deviceId}/${kind}`;
+  const [metaObj, offerObj, answerObj, viewerObj, phoneObj] = await Promise.all([
+    env.RECORDINGS.get(`${base}/meta.json`),
+    env.RECORDINGS.get(`${base}/offer.json`),
+    env.RECORDINGS.get(`${base}/answer.json`),
+    env.RECORDINGS.get(`${base}/viewer-ice.json`),
+    env.RECORDINGS.get(`${base}/phone-ice.json`),
+  ]);
+  if (!metaObj) return emptyRtc();
+  const meta = await metaObj.json();
+  const session = RTC_SESSION.test(meta.session || "") ? meta.session : "";
+  if (!session) return emptyRtc();
+  return {
+    session,
+    offer: offerObj ? await offerObj.json() : null,
+    answer: answerObj ? await answerObj.json() : null,
+    viewerIce: viewerObj ? await viewerObj.json() : [],
+    phoneIce: phoneObj ? await phoneObj.json() : [],
+    updatedAt: Number(meta.updatedAt || 0),
+  };
+}
+
+async function readRtc(env, url) {
+  const deviceId = url.searchParams.get("device_id") || "";
+  const kind = url.searchParams.get("kind") || "";
+  if (!DEVICE_ID.test(deviceId)) return rtcJson({ error: "Device id is not valid" }, 400);
+  if (kind) {
+    if (!RTC_KIND.test(kind)) return rtcJson({ error: "Stream is not valid" }, 400);
+    return rtcJson(await readRtcKind(env, deviceId, kind));
+  }
+  const [screen, camera] = await Promise.all([
+    readRtcKind(env, deviceId, "screen"),
+    readRtcKind(env, deviceId, "camera"),
+  ]);
+  return rtcJson({ screen, camera });
+}
+
+async function writeRtc(request, env) {
+  const body = await request.json().catch(() => null);
+  if (!body) return rtcJson({ error: "Not valid" }, 400);
+  const deviceId = body.device_id || "";
+  const kind = body.kind || "";
+  const role = body.role || "";
+  const session = String(body.session || "");
+  if (!DEVICE_ID.test(deviceId) || !RTC_KIND.test(kind) || !RTC_SESSION.test(session)) {
+    return rtcJson({ error: "Not valid" }, 400);
+  }
+  if (role !== "viewer" && role !== "phone") return rtcJson({ error: "Not valid" }, 400);
+  const base = `rtc/${deviceId}/${kind}`;
+  const metaObj = await env.RECORDINGS.get(`${base}/meta.json`);
+  const meta = metaObj ? await metaObj.json() : {};
+  const jsonHeaders = { httpMetadata: { contentType: "application/json" } };
+  if (role === "viewer") {
+    if (meta.session !== session) {
+      await env.RECORDINGS.delete(`${base}/answer.json`);
+      await env.RECORDINGS.delete(`${base}/phone-ice.json`);
+    }
+    const offer = body.offer ? normalizeDesc(body.offer, "offer") : null;
+    if (body.offer && !offer) return rtcJson({ error: "Offer is not valid" }, 400);
+    if (offer) await env.RECORDINGS.put(`${base}/offer.json`, JSON.stringify(offer), jsonHeaders);
+    if (body.ice) {
+      await env.RECORDINGS.put(`${base}/viewer-ice.json`, JSON.stringify(normalizeIce(body.ice)), jsonHeaders);
+    }
+    await env.RECORDINGS.put(`${base}/meta.json`, JSON.stringify({ session, updatedAt: Date.now() }), jsonHeaders);
+    return rtcJson({ ok: true });
+  }
+  if (meta.session !== session) return rtcJson({ ok: false, stale: true });
+  const answer = body.answer ? normalizeDesc(body.answer, "answer") : null;
+  if (body.answer && !answer) return rtcJson({ error: "Answer is not valid" }, 400);
+  if (answer) await env.RECORDINGS.put(`${base}/answer.json`, JSON.stringify(answer), jsonHeaders);
+  if (body.ice) {
+    await env.RECORDINGS.put(`${base}/phone-ice.json`, JSON.stringify(normalizeIce(body.ice)), jsonHeaders);
+  }
+  return rtcJson({ ok: true });
+}
+
+function json(body, status = 200, fresh = false) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      ...(fresh ? { "Cache-Control": "no-store" } : {}),
+      ...cors,
+    },
+  });
+}
+
+async function deleteKeys(env, keys) {
+  const unique = [...new Set(keys.filter(Boolean))];
+  for (let index = 0; index < unique.length; index += 1000) {
+    const batch = unique.slice(index, index + 1000);
+    if (batch.length === 1) await env.RECORDINGS.delete(batch[0]);
+    else if (batch.length) await env.RECORDINGS.delete(batch);
+  }
 }

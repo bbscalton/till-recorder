@@ -66,7 +66,8 @@ class RecordingService : Service() {
     private var cameraClip: Active? = null
     private var screenFrames = 0
     private var screenFpsAt = 0L
-    private var cameraOn = false
+    @Volatile private var cameraOn = false
+    private var liveRtc: LiveRtc? = null
     private var cameraPermissionNoted = false
     private var cameraWake: PowerManager.WakeLock? = null
     private var builtIn = false
@@ -135,6 +136,22 @@ class RecordingService : Service() {
         }
     }
 
+    private val rtcPoll = object : Runnable {
+        override fun run() {
+            if (!running || stopRequested.get()) return
+            val settings = store.current()
+            val rtc = liveRtc
+            val cameraWanted = cameraOn
+            net.execute {
+                val bundle = ShopClient.readRtc(settings) ?: return@execute
+                if (!cameraWanted) rtc?.close("camera")
+                val room = if (cameraWanted) bundle else bundle.copy(camera = RtcRoom.empty())
+                rtc?.onBundle(room)
+            }
+            handler.postDelayed(this, 500)
+        }
+    }
+
     private val flush = object : Runnable {
         override fun run() {
             if (running) return
@@ -154,6 +171,13 @@ class RecordingService : Service() {
     override fun onCreate() {
         super.onCreate()
         store = SettingsStore(this)
+        val rtc = LiveRtc(applicationContext) { enabled ->
+            handler.post { cameraVideo?.previewEnabled = enabled }
+        }
+        rtc.start { kind, session, answerType, answerSdp, ice ->
+            ShopClient.writeRtc(store.current(), kind, session, answerType, answerSdp, ice)
+        }
+        liveRtc = rtc
         watchThread.start()
         watchHandler = Handler(watchThread.looper)
         val screenFilter = IntentFilter().apply {
@@ -210,6 +234,8 @@ class RecordingService : Service() {
         running = false
         endSegment(continueRecording = false)
         releaseFront()
+        liveRtc?.stop()
+        liveRtc = null
         releaseWatch()
         releaseWake()
         try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
@@ -237,6 +263,7 @@ class RecordingService : Service() {
             startScreenEncoder()
             handler.post(grab)
             handler.post(command)
+            handler.post(rtcPoll)
             handler.postDelayed(beat, 60_000)
         } else if (screenEncoder == null) {
             startScreenEncoder()
@@ -303,6 +330,7 @@ class RecordingService : Service() {
             }
             val now = System.currentTimeMillis()
             lastSampleAt = now
+            liveRtc?.pushScreen(bitmap)
             screenEncoder?.draw(bitmap)
             noteScreenRate(now)
             val luma = sampleLuma(bitmap)
@@ -703,6 +731,9 @@ class RecordingService : Service() {
                 },
             )
             cameraVideo = video
+            video.onPreview = { width, height, rotation, y, u, v ->
+                liveRtc?.pushCamera(width, height, rotation, y, u, v)
+            }
             video.start()
             publish("Front camera is on. The website shows it beside the screen.")
         } else {
@@ -710,6 +741,7 @@ class RecordingService : Service() {
             if (clipKind == "camera" && active != null) {
                 endSegment(continueRecording = false)
             }
+            liveRtc?.close("camera")
             cameraVideo?.shutdown()
             cameraVideo = null
             frontCamera?.stop()
@@ -787,6 +819,7 @@ class RecordingService : Service() {
         cameraOn = false
         previousCameraLuma = null
         lastCameraMotionAt = 0L
+        liveRtc?.close("camera")
         cameraVideo?.shutdown()
         cameraVideo = null
         frontCamera?.shutdown()

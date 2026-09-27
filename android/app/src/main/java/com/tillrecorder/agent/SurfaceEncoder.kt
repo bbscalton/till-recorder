@@ -337,14 +337,14 @@ class SurfaceEncoder(
         val key = info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME != 0
         val ticks = ticksFor(info.presentationTimeUs)
         maybeWriteVideo(bytes, info.presentationTimeUs, info.flags)
-        val emitted = ArrayList<Chunk>(1)
         batch.add(Fmp4Muxer.Sample(avcc, key, ticks))
-        if (key && batch.size > 1 && batch[0].keyframe) {
-            val newest = batch.removeAt(batch.lastIndex)
-            flushBatch()?.let { emitted.add(it) }
-            batch.add(newest)
-        }
-        return emitted
+        if (batchStartedAt == 0L) batchStartedAt = SystemClock.elapsedRealtime()
+        val age = SystemClock.elapsedRealtime() - batchStartedAt
+        val ready = batch.size >= 6 || age >= 200L
+        if (!ready || batch.isEmpty()) return emptyList()
+        if (!batch[0].keyframe && batch.size < 12 && age < 500L) return emptyList()
+        batchStartedAt = 0L
+        return listOfNotNull(flushBatch())
     }
 
     private fun maybeWriteVideo(annexB: ByteArray, pts: Long, flags: Int) {
@@ -432,12 +432,15 @@ class SurfaceEncoder(
         batch.clear()
         val seq = nextSequence
         nextSequence += 1
-        return Chunk(seq, mux.media(samples), codecName)
+        val bytes = mux.media(samples)
+        Log.i(TAG, "Fragment $seq ${samples.size} frames ${bytes.size} bytes")
+        return Chunk(seq, bytes, codecName)
     }
 
     private var encodedFrames = 0
     private var encodedAt = 0L
     private var lastSyncAt = 0L
+    private var batchStartedAt = 0L
 
     private fun maybeRequestSync() {
         val now = SystemClock.elapsedRealtime()

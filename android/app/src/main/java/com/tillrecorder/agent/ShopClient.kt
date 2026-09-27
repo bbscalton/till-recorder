@@ -11,6 +11,25 @@ data class SegmentMeta(val startedAtMs: Long, val endedAtMs: Long, val kind: Str
 
 data class RemoteControl(val camera: Boolean, val locked: Boolean, val lockSeq: Int)
 
+data class RtcIce(val candidate: String, val sdpMid: String?, val sdpMLineIndex: Int)
+
+data class RtcRoom(
+    val session: String,
+    val offerType: String,
+    val offerSdp: String,
+    val answerType: String,
+    val answerSdp: String,
+    val viewerIce: List<RtcIce>,
+    val phoneIce: List<RtcIce>,
+    val updatedAt: Long,
+) {
+    companion object {
+        fun empty() = RtcRoom("", "", "", "", "", emptyList(), emptyList(), 0L)
+    }
+}
+
+data class RtcBundle(val screen: RtcRoom, val camera: RtcRoom)
+
 sealed class UploadResult {
     data object Ok : UploadResult()
     data object Unauthorized : UploadResult()
@@ -162,6 +181,122 @@ object ShopClient {
         }
     }
 
+    fun readRtc(settings: ShopSettings): RtcBundle? {
+        val base = SettingsStore.normalizeBaseUrl(settings.baseUrl) ?: return null
+        if (settings.token.isBlank()) return null
+        return try {
+            val conn = open(base, "/api/rtc?device_id=${settings.deviceId}", settings.token, "GET")
+            conn.connectTimeout = 4_000
+            conn.readTimeout = 4_000
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader()
+                ?.use { it.readText() }
+                .orEmpty()
+            conn.disconnect()
+            if (code !in 200..299) null else {
+                val json = JSONObject(text)
+                RtcBundle(
+                    screen = parseRoom(json.optJSONObject("screen")),
+                    camera = parseRoom(json.optJSONObject("camera")),
+                )
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "Live signaling read failed", error)
+            null
+        }
+    }
+
+    fun writeRtc(
+        settings: ShopSettings,
+        kind: String,
+        session: String,
+        answerType: String?,
+        answerSdp: String?,
+        ice: List<RtcIce>?,
+    ): String {
+        val base = SettingsStore.normalizeBaseUrl(settings.baseUrl) ?: return "fail"
+        if (settings.token.isBlank() || session.isBlank()) return "fail"
+        try {
+            val payload = JSONObject()
+                .put("device_id", settings.deviceId)
+                .put("kind", kind)
+                .put("role", "phone")
+                .put("session", session)
+            if (!answerType.isNullOrBlank() && !answerSdp.isNullOrBlank()) {
+                payload.put("answer", JSONObject().put("type", answerType).put("sdp", answerSdp))
+            }
+            if (ice != null) {
+                val array = org.json.JSONArray()
+                for (item in ice) {
+                    array.put(
+                        JSONObject()
+                            .put("candidate", item.candidate)
+                            .put("sdpMid", item.sdpMid)
+                            .put("sdpMLineIndex", item.sdpMLineIndex)
+                    )
+                }
+                payload.put("ice", array)
+            }
+            val body = payload.toString().toByteArray(Charsets.UTF_8)
+            val conn = open(base, "/api/rtc", settings.token, "POST")
+            conn.connectTimeout = 4_000
+            conn.readTimeout = 4_000
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            conn.setFixedLengthStreamingMode(body.size)
+            conn.outputStream.use { it.write(body) }
+            val code = conn.responseCode
+            val text = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader()
+                ?.use { it.readText() }
+                .orEmpty()
+            conn.disconnect()
+            if (code !in 200..299) {
+                Log.w(TAG, "Live signaling write HTTP $code")
+                return "fail"
+            }
+            val json = JSONObject(text)
+            return when {
+                json.optBoolean("stale", false) -> "stale"
+                json.optBoolean("ok", false) -> "ok"
+                else -> "fail"
+            }
+        } catch (error: Exception) {
+            Log.w(TAG, "Live signaling write failed", error)
+            return "fail"
+        }
+    }
+
+    private fun parseRoom(json: JSONObject?): RtcRoom {
+        if (json == null) return RtcRoom.empty()
+        val offer = json.optJSONObject("offer")
+        val answer = json.optJSONObject("answer")
+        return RtcRoom(
+            session = json.optString("session"),
+            offerType = offer?.optString("type").orEmpty(),
+            offerSdp = offer?.optString("sdp").orEmpty(),
+            answerType = answer?.optString("type").orEmpty(),
+            answerSdp = answer?.optString("sdp").orEmpty(),
+            viewerIce = parseIce(json.optJSONArray("viewerIce")),
+            phoneIce = parseIce(json.optJSONArray("phoneIce")),
+            updatedAt = json.optLong("updatedAt", 0L),
+        )
+    }
+
+    private fun parseIce(array: org.json.JSONArray?): List<RtcIce> {
+        if (array == null) return emptyList()
+        val out = ArrayList<RtcIce>(array.length())
+        for (i in 0 until array.length()) {
+            val item = array.optJSONObject(i) ?: continue
+            val candidate = item.optString("candidate")
+            if (candidate.isBlank()) continue
+            val mid = if (item.isNull("sdpMid")) null else item.optString("sdpMid").ifBlank { null }
+            out.add(RtcIce(candidate, mid, item.optInt("sdpMLineIndex", 0)))
+        }
+        return out
+    }
+
     fun uploadCamera(settings: ShopSettings, jpeg: ByteArray) {
         uploadJpeg(settings, jpeg, "/api/camera-frame")
     }
@@ -184,14 +319,16 @@ object ShopClient {
             conn.setRequestProperty("X-Stream-Seq", sequence.toString())
             conn.setRequestProperty("X-Stream-Codec", codec.take(32))
             conn.setFixedLengthStreamingMode(bytes.size)
+            conn.setRequestProperty("Connection", "keep-alive")
             conn.outputStream.use { it.write(bytes) }
             val code = conn.responseCode
+            val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+            stream?.use { it.readBytes() }
             if (code in 200..299) {
                 Log.i(TAG, "Live $kind #$sequence ${bytes.size} bytes HTTP $code")
             } else {
                 Log.w(TAG, "Live $kind #$sequence ${bytes.size} bytes HTTP $code")
             }
-            conn.disconnect()
         } catch (error: Exception) {
             Log.w(TAG, "Live video upload failed", error)
         }

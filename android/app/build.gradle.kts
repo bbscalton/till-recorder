@@ -11,8 +11,8 @@ android {
         applicationId = "com.tillrecorder.agent"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.4.0"
+        versionCode = 10
+        versionName = "1.5.4"
     }
 
     buildTypes {
@@ -43,6 +43,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
+    implementation("io.getstream:stream-webrtc-android:1.3.8")
 
     testImplementation("junit:junit:4.13.2")
 }

@@ -14,5 +14,13 @@
       "binding": "RECORDINGS",
       "bucket_name": "till-recorder"
     }
+  ],
+  "durable_objects": {
+    "bindings": [
+      { "name": "LIVE_RELAY", "class_name": "LiveRelay" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1-live-relay", "new_sqlite_classes": ["LiveRelay"] }
   ]
 }
