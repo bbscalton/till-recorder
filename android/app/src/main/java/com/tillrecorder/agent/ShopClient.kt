@@ -9,7 +9,13 @@ import java.net.URL
 
 data class SegmentMeta(val startedAtMs: Long, val endedAtMs: Long, val kind: String = "screen")
 
-data class RemoteControl(val camera: Boolean, val locked: Boolean, val lockSeq: Int)
+data class RemoteControl(
+    val camera: Boolean,
+    val locked: Boolean,
+    val lockSeq: Int,
+    val overhead: String = "",
+    val scan: Boolean = false,
+)
 
 data class RtcIce(val candidate: String, val sdpMid: String?, val sdpMLineIndex: Int)
 
@@ -109,11 +115,68 @@ object ShopClient {
                     camera = json.optBoolean("camera", false),
                     locked = json.optBoolean("locked", false),
                     lockSeq = json.optInt("lockSeq", 0),
+                    overhead = json.optString("overhead", ""),
+                    scan = json.optBoolean("scan", false),
                 )
             }
         } catch (error: Exception) {
             Log.w(TAG, "Heartbeat failed", error)
             null
+        }
+    }
+
+    fun postInputs(settings: ShopSettings, entries: List<Pair<Long, String>>): Boolean {
+        val base = SettingsStore.normalizeBaseUrl(settings.baseUrl) ?: return false
+        if (settings.token.isBlank() || entries.isEmpty()) return false
+        return try {
+            val list = org.json.JSONArray()
+            for ((at, text) in entries) {
+                list.put(JSONObject().put("at", at).put("text", text))
+            }
+            val day = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                .format(java.util.Date())
+            val body = JSONObject()
+                .put("device_id", settings.deviceId)
+                .put("device_name", settings.deviceName)
+                .put("local_day", day)
+                .put("entries", list)
+                .toString()
+                .toByteArray(Charsets.UTF_8)
+            val conn = open(base, "/api/inputs", settings.token, "POST")
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            conn.setFixedLengthStreamingMode(body.size)
+            conn.outputStream.use { it.write(body) }
+            val code = conn.responseCode
+            conn.disconnect()
+            code in 200..299
+        } catch (error: Exception) {
+            Log.w(TAG, "Input upload failed", error)
+            false
+        }
+    }
+
+    fun setOverhead(settings: ShopSettings, attached: Boolean, label: String): Boolean {
+        val base = SettingsStore.normalizeBaseUrl(settings.baseUrl) ?: return false
+        if (settings.token.isBlank()) return false
+        return try {
+            val body = JSONObject()
+                .put("device_id", settings.deviceId)
+                .put("attached", attached)
+                .put("label", label.trim())
+                .toString()
+                .toByteArray(Charsets.UTF_8)
+            val conn = open(base, "/api/overhead", settings.token, "POST")
+            conn.doOutput = true
+            conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            conn.setFixedLengthStreamingMode(body.size)
+            conn.outputStream.use { it.write(body) }
+            val code = conn.responseCode
+            conn.disconnect()
+            code in 200..299
+        } catch (error: Exception) {
+            Log.w(TAG, "Overhead save failed", error)
+            false
         }
     }
 
@@ -152,7 +215,11 @@ object ShopClient {
             "ended_at_ms" to meta.endedAtMs.toString(),
             "local_day" to java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
                 .format(java.util.Date(meta.startedAtMs)),
-            "kind" to if (meta.kind == "camera") "camera" else "screen",
+            "kind" to when (meta.kind) {
+                "camera" -> "camera"
+                "overhead" -> "overhead"
+                else -> "screen"
+            },
         )
         return try {
             val conn = open(base, "/api/segments", settings.token, "POST")
@@ -305,9 +372,9 @@ object ShopClient {
         uploadJpeg(settings, jpeg, "/api/live")
     }
 
-    fun uploadStream(settings: ShopSettings, kind: String, sequence: Int, bytes: ByteArray, codec: String) {
-        val base = SettingsStore.normalizeBaseUrl(settings.baseUrl) ?: return
-        if (settings.token.isBlank() || bytes.isEmpty()) return
+    fun uploadStream(settings: ShopSettings, kind: String, sequence: Int, bytes: ByteArray, codec: String): Boolean {
+        val base = SettingsStore.normalizeBaseUrl(settings.baseUrl) ?: return false
+        if (settings.token.isBlank() || bytes.isEmpty()) return false
         try {
             val conn = open(base, "/api/stream", settings.token, "POST")
             conn.connectTimeout = 8_000
@@ -326,11 +393,13 @@ object ShopClient {
             stream?.use { it.readBytes() }
             if (code in 200..299) {
                 Log.i(TAG, "Live $kind #$sequence ${bytes.size} bytes HTTP $code")
-            } else {
-                Log.w(TAG, "Live $kind #$sequence ${bytes.size} bytes HTTP $code")
+                return true
             }
+            Log.w(TAG, "Live $kind #$sequence ${bytes.size} bytes HTTP $code")
+            return false
         } catch (error: Exception) {
             Log.w(TAG, "Live video upload failed", error)
+            return false
         }
     }
 

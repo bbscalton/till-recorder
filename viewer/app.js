@@ -17,6 +17,19 @@ const clock = document.getElementById("clock");
 const track = document.getElementById("track");
 const playhead = document.getElementById("playhead");
 const liveState = document.getElementById("liveState");
+const wallView = document.getElementById("wallView");
+const detailView = document.getElementById("detailView");
+const overhead = document.getElementById("overhead");
+const overheadHint = document.getElementById("overheadHint");
+const playCamera = document.getElementById("playCamera");
+const playOverhead = document.getElementById("playOverhead");
+const searchInput = document.getElementById("searchInput");
+const searchResults = document.getElementById("searchResults");
+const downloadClip = document.getElementById("downloadClip");
+const cashierInput = document.getElementById("cashierInput");
+const overheadNote = document.getElementById("overheadNote");
+const quietNote = document.getElementById("quietNote");
+const viewTitle = document.getElementById("viewTitle");
 function storedToken() {
   try {
     return localStorage.getItem("till-token") || sessionStorage.getItem("till-token") || "";
@@ -46,7 +59,13 @@ let segments = [];
 let dayGeneration = 0;
 let active = null;
 let playheadMs = null;
+let typed = [];
+let highlightedAt = null;
+let searchHits = [];
+let searchFocusAt = 0;
+let showingPlayback = false;
 let pairTimer = 0;
+const wallFeeds = new Map();
 
 function todayIso() {
   const now = new Date();
@@ -141,25 +160,33 @@ document.getElementById("pairButton").addEventListener("click", async () => {
   const code = document.getElementById("pairCode");
   const status = document.getElementById("pairStatus");
   clearInterval(pairTimer);
-  const created = await api("/api/pair-codes", { method: "POST" });
-  code.textContent = created.display || created.code;
-  status.textContent = "Enter this code in Till Recorder on the tablet or the Windows PC. It works for 10 minutes.";
   box.hidden = false;
-  pairTimer = setInterval(async () => {
-    try {
-      const state = await api(`/api/pair-codes/${created.code}`);
-      if (state.claimed) {
-        clearInterval(pairTimer);
-        status.textContent = `${state.name || "Register"} is connected.`;
-        await refresh();
-      } else if (state.expired) {
-        clearInterval(pairTimer);
-        status.textContent = "That code expired. Pair again.";
+  status.textContent = "Creating a pair code…";
+  code.textContent = "";
+  try {
+    const created = await api("/api/pair-codes", { method: "POST" });
+    if (!created || !created.code) throw new Error("empty");
+    code.textContent = created.display || created.code;
+    status.textContent = "Enter this code in Till Recorder on the tablet or the Windows PC. It works for 10 minutes.";
+    pairTimer = setInterval(async () => {
+      try {
+        const state = await api(`/api/pair-codes/${created.code}`);
+        if (state.claimed) {
+          clearInterval(pairTimer);
+          status.textContent = `${state.name || "Register"} is connected.`;
+          await refresh();
+        } else if (state.expired) {
+          clearInterval(pairTimer);
+          status.textContent = "That code expired. Pair again.";
+        }
+      } catch (error) {
+        if (error.message === "auth") clearInterval(pairTimer);
       }
-    } catch (error) {
-      if (error.message === "auth") clearInterval(pairTimer);
-    }
-  }, 2000);
+    }, 2000);
+  } catch (error) {
+    code.textContent = "";
+    status.textContent = error.message === "auth" ? "Sign in again, then pair." : "Could not create a pair code. Try again.";
+  }
 });
 
 dayInput.addEventListener("change", () => loadDay());
@@ -212,11 +239,48 @@ document.getElementById("timeline").addEventListener("click", (event) => {
   playAt(start + ratio * (end - start));
 });
 
+document.getElementById("backWall").addEventListener("click", () => {
+  selectedId = "";
+  clearPlayer();
+  wallView.hidden = false;
+  detailView.hidden = true;
+  document.getElementById("searchScope").value = "all";
+  viewTitle.textContent = "All registers";
+  searchResults.hidden = true;
+  renderDevices();
+});
+document.getElementById("liveNow").addEventListener("click", () => clearPlayer());
+document.getElementById("searchForm").addEventListener("submit", (event) => {
+  event.preventDefault();
+  runSearch().catch((error) => {
+    if (error.message !== "auth") document.getElementById("status").textContent = "Search did not finish.";
+  });
+});
+document.getElementById("staffForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!selectedId) return;
+  await api("/api/staff", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ device_id: selectedId, name: cashierInput.value.trim() }),
+  });
+  document.getElementById("status").textContent = "Saved the cashier for this register.";
+  await refresh();
+});
+downloadClip.addEventListener("click", () => downloadActive().catch(() => {
+  document.getElementById("status").textContent = "Could not download that clip.";
+}));
+
 player.addEventListener("timeupdate", () => {
-  if (!active) return;
+  if (!active || !showingPlayback) return;
   playheadMs = active.startedAtMs + player.currentTime * 1000;
   clock.textContent = formatClock(playheadMs);
   placePlayhead();
+  const cam = cover(playheadMs, "camera");
+  const over = cover(playheadMs, "overhead");
+  if (cam) follow(playCamera, cam, playheadMs);
+  if (over) follow(playOverhead, over, playheadMs);
+  renderTyped();
 });
 player.addEventListener("ended", () => {
   if (!active) return;
@@ -239,37 +303,29 @@ async function refresh() {
 async function refreshNow() {
   const payload = await api("/api/devices");
   devices = payload.devices;
-  if (!selectedId && devices[0]) selectedId = devices[0].id;
-  deviceList.replaceChildren();
-  if (!devices.length) {
-    const empty = document.createElement("p");
-    empty.className = "hint";
-    empty.textContent = "No register has checked in yet. Pair the tablet or the Windows app first.";
-    deviceList.appendChild(empty);
-  }
-  for (const device of devices) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "device" + (device.id === selectedId ? " selected" : "") + (device.recording ? " live" : "");
-    const name = document.createElement("span");
-    name.textContent = device.name || "Register";
-    const meta = document.createElement("small");
-    meta.textContent = device.locked ? "Locked" : device.recording ? "Screen is active" : "Screen is still";
-    button.append(name, meta);
-    button.addEventListener("click", async () => {
-      selectedId = device.id;
-      await refresh();
-      await loadDay();
-    });
-    deviceList.appendChild(button);
-  }
+  renderDevices();
+  if (!selectedId || detailView.hidden) return;
   const current = devices.find((device) => device.id === selectedId);
+  paintDetail(current);
+  if (dayInput.value) await loadDay();
+}
+
+function paintDetail(current) {
   const locked = Boolean(current && current.locked);
-  liveState.textContent = locked
-    ? "Locked — the register cannot be used until the owner PIN is entered"
-    : feedNote || (current && current.recording
-      ? "Live video — a clip is being saved"
-      : "Live video — a clip starts when the screen or the camera moves");
+  const online = deviceOnline(current);
+  const quiet = live.dataset.quiet === "1";
+  const nextLive = !current
+    ? "Select a register"
+    : locked
+      ? "Locked"
+      : !online
+        ? `Offline · last seen ${formatSeen(current)}`
+        : quiet
+          ? "Quiet · showing the last frame"
+          : "Live";
+  if (liveState.textContent !== nextLive) liveState.textContent = nextLive;
+  liveState.className = "status-line" + (!online ? " offline" : quiet ? " quiet" : "");
+  quietNote.hidden = !quiet || !online || showingPlayback;
   lockToggle.textContent = locked ? "Unlock" : "Lock";
   lockToggle.classList.toggle("on", locked);
   lockToggle.disabled = !selectedId;
@@ -280,15 +336,114 @@ async function refreshNow() {
   cameraToggle.textContent = cameraOn ? "Turn off" : "Turn on";
   cameraToggle.classList.toggle("on", cameraOn);
   cameraToggle.disabled = !selectedId;
-  camera.hidden = !cameraOn;
-  cameraHint.hidden = cameraOn;
-  if (!cameraOn) cameraHint.textContent = "Off. Turn it on to see the person at the register beside the screen.";
-  if (selectedId) syncLive(selectedId, cameraOn);
-  else {
-    screenFeed.stop();
-    cameraFeed.stop();
+  if (!showingPlayback) {
+    const cameraHintText = "Off. Turn it on to see the person at the register.";
+    camera.hidden = !cameraOn;
+    cameraHint.hidden = cameraOn;
+    if (!cameraOn && cameraHint.textContent !== cameraHintText) cameraHint.textContent = cameraHintText;
+    const overheadOn = Boolean(current && current.overhead);
+    overhead.hidden = !overheadOn;
+    overheadHint.hidden = overheadOn;
+    const overheadHintText = "No overhead camera has been added on this register.";
+    if (!overheadOn && overheadHint.textContent !== overheadHintText) overheadHint.textContent = overheadHintText;
   }
-  if (dayInput.value) await loadDay();
+  if (overheadNote) {
+    const attached = Boolean(current && current.overhead);
+    const label = current && current.overheadLabel ? current.overheadLabel : "";
+    const nextNote = attached
+      ? `Overhead camera${label ? `: ${label}` : ""}. The picture is sent from the till.`
+      : "Add the camera on the register itself. This page only shows the picture that till sends.";
+    if (overheadNote.textContent !== nextNote) overheadNote.textContent = nextNote;
+  }
+  if (document.activeElement !== cashierInput) cashierInput.value = current && current.cashier ? current.cashier : "";
+  if (selectedId && !showingPlayback) syncLive(selectedId, cameraOn, Boolean(current && current.overhead));
+  viewTitle.textContent = current ? current.name : "All registers";
+  document.getElementById("detailName").textContent = current ? current.name || "Register" : "Register";
+}
+
+function formatSeen(device) {
+  const seen = Number(device && device.lastSeen || 0);
+  if (!seen) return "never";
+  const ago = Date.now() - seen;
+  if (ago < 90_000) return "just now";
+  const mins = Math.round(ago / 60000);
+  if (mins < 60) return `${mins} min ago`;
+  return formatClock(seen);
+}
+
+function renderDevices() {
+  if (!devices.length) {
+    if (deviceList.dataset.mode === "empty") return;
+    deviceList.dataset.mode = "empty";
+    deviceList.replaceChildren();
+    const empty = document.createElement("p");
+    empty.className = "hint";
+    empty.textContent = "No register has checked in yet. Pair the tablet or the Windows PC first.";
+    deviceList.appendChild(empty);
+    return;
+  }
+  if (deviceList.dataset.mode === "empty") deviceList.replaceChildren();
+  deviceList.dataset.mode = "list";
+  const seen = new Set();
+  for (const device of devices) {
+    seen.add(device.id);
+    let button = deviceList.querySelector(`[data-id="${device.id}"]`);
+    if (!button) {
+      button = document.createElement("button");
+      button.type = "button";
+      button.className = "tile";
+      button.dataset.id = device.id;
+      const video = document.createElement("video");
+      video.muted = true;
+      video.autoplay = true;
+      video.playsInline = true;
+      const meta = document.createElement("div");
+      meta.className = "tile-meta";
+      const name = document.createElement("strong");
+      const chip = document.createElement("span");
+      chip.className = "chip";
+      const who = document.createElement("small");
+      meta.append(name, chip, who);
+      button.append(video, meta);
+      button.addEventListener("click", () => openTill(device.id));
+      deviceList.appendChild(button);
+      wallFeeds.set(device.id, new PushFeed(video, "screen", false));
+    }
+    const online = deviceOnline(device);
+    const video = button.querySelector("video");
+    const quiet = video.dataset.quiet === "1";
+    const chip = button.querySelector(".chip");
+    const chipText = !online ? "Offline" : quiet ? "Quiet" : "Live";
+    chip.textContent = chipText;
+    chip.className = "chip " + (chipText === "Live" ? "live" : chipText === "Quiet" ? "quiet" : "offline");
+    button.querySelector("strong").textContent = device.name || "Register";
+    const who = button.querySelector("small");
+    const whoText = !online
+      ? `Last seen ${formatSeen(device)}`
+      : (device.cashier ? device.cashier : "No cashier set");
+    if (who.textContent !== whoText) who.textContent = whoText;
+    const feed = wallFeeds.get(device.id);
+    if (feed && online && !feed.healthy(device.id)) feed.start(device.id);
+  }
+  for (const button of [...deviceList.querySelectorAll(".tile")]) {
+    if (!seen.has(button.dataset.id)) {
+      const feed = wallFeeds.get(button.dataset.id);
+      if (feed) feed.stop();
+      wallFeeds.delete(button.dataset.id);
+      button.remove();
+    }
+  }
+}
+
+async function openTill(id) {
+  if (selectedId && selectedId !== id) clearPlayer(true);
+  selectedId = id;
+  wallView.hidden = true;
+  detailView.hidden = false;
+  document.getElementById("searchScope").value = "one";
+  const current = devices.find((device) => device.id === id);
+  paintDetail(current);
+  await loadDay();
 }
 
 async function loadDay() {
@@ -297,20 +452,26 @@ async function loadDay() {
   const payload = await api(`/api/segments?device_id=${encodeURIComponent(selectedId)}&date=${encodeURIComponent(dayInput.value || todayIso())}`);
   if (generation !== dayGeneration) return;
   segments = payload.segments || [];
+  const segmentKey = segments.map((segment) => segment.id + ":" + segment.startedAtMs + ":" + segment.endedAtMs + ":" + (segment.kind || "screen")).join("|");
   daySize.textContent = segments.length
-    ? `${segments.length} clip(s). Blue marks are the front camera.`
+    ? `${segments.length} clip(s) on this day. Screen, camera, and overhead share one timeline.`
     : "Nothing was recorded on this day.";
-  track.replaceChildren();
   deleteClip.hidden = !active || !segments.some((segment) => segment.id === active.id);
+  downloadClip.hidden = deleteClip.hidden;
+  await loadTyped(generation);
+  if (segmentKey === track.dataset.segments) return;
+  track.dataset.segments = segmentKey;
+  track.replaceChildren();
   if (!segments.length) return;
   const start = segments[0].startedAtMs;
   const end = segments[segments.length - 1].endedAtMs;
   const span = Math.max(1, end - start);
   for (const segment of segments) {
+    const kind = kindOf(segment);
     const block = document.createElement("div");
-    block.className = "segment" + (segment.kind === "camera" ? " camera" : "");
+    block.className = "segment" + (kind === "screen" ? "" : " " + kind);
     block.dataset.id = segment.id;
-    block.title = segment.kind === "camera" ? "Front camera" : "Register screen";
+    block.title = kind === "camera" ? "Camera" : kind === "overhead" ? "Overhead" : "Screen";
     block.addEventListener("click", (event) => {
       event.stopPropagation();
       playAt(segment.startedAtMs + 50);
@@ -321,33 +482,222 @@ async function loadDay() {
   }
 }
 
-function playAt(ms) {
-  const segment = segments.find((item) => ms >= item.startedAtMs && ms < item.endedAtMs);
-  if (!segment) return;
-  const offset = Math.max(0, (ms - segment.startedAtMs) / 1000);
-  if (!active || active.id !== segment.id) {
-    active = segment;
-    player.src = `${worker}/api/media/${segment.id}?access=${encodeURIComponent(token)}`;
-    player.addEventListener("loadedmetadata", function seek() {
-      player.currentTime = offset;
-      player.removeEventListener("loadedmetadata", seek);
-    });
-    player.play().catch(() => {});
-  } else {
-    player.currentTime = offset;
-    player.play().catch(() => {});
-  }
-  deleteClip.hidden = false;
+const inputList = document.getElementById("inputList");
+
+async function loadTyped(generation) {
+  const payload = await api(`/api/inputs?device_id=${encodeURIComponent(selectedId)}&date=${encodeURIComponent(dayInput.value || todayIso())}`);
+  if (generation !== dayGeneration) return;
+  typed = payload.entries || [];
+  renderTyped();
 }
 
-function clearPlayer() {
+function renderTyped() {
+  if (!inputList) return;
+  const now = Date.now();
+  const query = searchInput.value.trim().toLowerCase();
+  let rows = showingPlayback && active
+    ? typed.filter((entry) => entry.at >= active.startedAtMs - 1500 && entry.at <= active.endedAtMs + 1500)
+    : typed.filter((entry) => now - entry.at < 10 * 60 * 1000).slice(-30);
+  if (searchFocusAt && !rows.some((entry) => entry.at === searchFocusAt)) {
+    const focus = typed.find((entry) => entry.at === searchFocusAt);
+    if (focus) rows = rows.concat(focus).sort((a, b) => a.at - b.at);
+  }
+  let current = null;
+  if (searchFocusAt) current = rows.find((entry) => entry.at === searchFocusAt) || null;
+  if (!current && active && playheadMs != null) {
+    for (const entry of rows) if (entry.at <= playheadMs + 400) current = entry;
+  } else if (!current && !active && rows.length) {
+    current = rows[rows.length - 1];
+  }
+  const key = rows.map((entry) => entry.at + ":" + entry.text + ":" + (entry.cashier || "")).join("|") + "|" + (current ? current.at : "") + "|" + query;
+  if (key === inputList.dataset.key) return;
+  inputList.dataset.key = key;
+  inputList.replaceChildren();
+  if (!rows.length) {
+    const empty = document.createElement("li");
+    empty.className = "empty";
+    empty.textContent = active ? "Nothing was typed during this clip." : "No recent typing on this register.";
+    inputList.appendChild(empty);
+    highlightedAt = null;
+    return;
+  }
+  for (const entry of rows) {
+    const item = document.createElement("li");
+    if (entry === current) item.className = "current";
+    else if (query && entry.text.toLowerCase().includes(query)) item.className = "match";
+    const time = document.createElement("time");
+    time.textContent = formatClock(entry.at);
+    const text = document.createElement("span");
+    text.textContent = entry.cashier ? `${entry.text} · ${entry.cashier}` : entry.text;
+    item.append(time, text);
+    inputList.appendChild(item);
+  }
+  if (current && current.at !== highlightedAt) {
+    highlightedAt = current.at;
+    const marked = inputList.querySelector(".current");
+    if (marked) marked.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function kindOf(segment) {
+  return segment.kind === "camera" || segment.kind === "overhead" ? segment.kind : "screen";
+}
+
+function cover(ms, kind) {
+  return segments.find((segment) => kindOf(segment) === kind && ms >= segment.startedAtMs && ms < segment.endedAtMs);
+}
+
+function nearestClip(ms, kind) {
+  const list = segments.filter((segment) => kindOf(segment) === kind);
+  let best = null;
+  let bestDist = Infinity;
+  for (const segment of list) {
+    const dist = ms < segment.startedAtMs ? segment.startedAtMs - ms : ms >= segment.endedAtMs ? ms - segment.endedAtMs : 0;
+    if (dist < bestDist) {
+      best = segment;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+function offsetIn(segment, ms) {
+  const length = Math.max(0.2, (segment.endedAtMs - segment.startedAtMs) / 1000);
+  const raw = (ms - segment.startedAtMs) / 1000;
+  return Math.min(Math.max(0, raw), Math.max(0, length - 0.05));
+}
+
+function playAt(ms) {
+  const screen = cover(ms, "screen") || nearestClip(ms, "screen");
+  if (!screen) return;
+  showingPlayback = true;
+  live.hidden = true;
+  player.hidden = false;
+  cue(player, screen, offsetIn(screen, ms));
+  const cam = cover(ms, "camera");
+  const over = cover(ms, "overhead");
+  camera.hidden = true;
+  cameraHint.hidden = true;
+  if (cam) cue(playCamera, cam, offsetIn(cam, ms));
+  else hideClip(playCamera);
+  overhead.hidden = true;
+  if (over) {
+    overheadHint.hidden = true;
+    cue(playOverhead, over, offsetIn(over, ms));
+  } else hideClip(playOverhead);
+  active = screen;
+  playheadMs = screen.startedAtMs + offsetIn(screen, ms) * 1000;
+  clock.textContent = formatClock(playheadMs);
+  deleteClip.hidden = false;
+  downloadClip.hidden = false;
+  placePlayhead();
+  renderTyped();
+}
+
+function cue(video, segment, offset) {
+  video.hidden = false;
+  const go = () => {
+    try { video.currentTime = offset; } catch (error) {}
+    video.play().catch(() => {});
+  };
+  if (video.dataset.segment !== segment.id) {
+    video.dataset.segment = segment.id;
+    video.src = `${worker}/api/media/${segment.id}?access=${encodeURIComponent(token)}`;
+    video.onloadedmetadata = go;
+  } else go();
+}
+
+function follow(video, segment, ms) {
+  if (video.dataset.segment !== segment.id) cue(video, segment, offsetIn(segment, ms));
+  else if (Math.abs(video.currentTime - offsetIn(segment, ms)) > 0.8) video.currentTime = offsetIn(segment, ms);
+}
+
+function hideClip(video) {
+  video.hidden = true;
+  video.pause();
+}
+
+function clearPlayer(keepFocus) {
+  showingPlayback = false;
+  if (!keepFocus) searchFocusAt = 0;
   active = null;
   playheadMs = null;
-  player.pause();
-  player.removeAttribute("src");
-  player.load();
+  for (const video of [player, playCamera, playOverhead]) hideClip(video);
+  for (const video of [player, playCamera, playOverhead]) {
+    video.removeAttribute("src");
+    video.dataset.segment = "";
+    video.load();
+  }
+  live.hidden = false;
   deleteClip.hidden = true;
+  downloadClip.hidden = true;
   playhead.hidden = true;
+  const current = devices.find((device) => device.id === selectedId);
+  if (current) paintDetail(current);
+  renderTyped();
+}
+
+async function runSearch() {
+  const query = searchInput.value.trim();
+  searchResults.replaceChildren();
+  if (!query) {
+    searchResults.hidden = true;
+    searchFocusAt = 0;
+    renderTyped();
+    return;
+  }
+  const day = dayInput.value || todayIso();
+  const scope = document.getElementById("searchScope").value;
+  let path = `/api/search?date=${encodeURIComponent(day)}&q=${encodeURIComponent(query)}`;
+  if (scope === "one" && selectedId) path += `&device_id=${encodeURIComponent(selectedId)}`;
+  const payload = await api(path);
+  searchHits = payload.hits || [];
+  searchResults.hidden = false;
+  if (!searchHits.length) {
+    const empty = document.createElement("li");
+    empty.className = "empty";
+    empty.textContent = "Nothing typed that day matches.";
+    searchResults.appendChild(empty);
+    return;
+  }
+  for (const hit of searchHits) {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    const time = document.createElement("time");
+    time.textContent = formatClock(hit.at);
+    const who = document.createElement("span");
+    who.className = "who";
+    who.textContent = [hit.deviceName, hit.cashier].filter(Boolean).join(" · ") || "Register";
+    const text = document.createElement("span");
+    text.textContent = hit.text;
+    button.append(time, who, text);
+    button.addEventListener("click", () => chooseHit(hit, button));
+    item.appendChild(button);
+    searchResults.appendChild(item);
+  }
+}
+
+async function chooseHit(hit, button) {
+  searchFocusAt = hit.at;
+  for (const item of searchResults.querySelectorAll("button")) item.classList.remove("chosen");
+  if (button) button.classList.add("chosen");
+  if (selectedId !== hit.deviceId || detailView.hidden) await openTill(hit.deviceId);
+  playAt(hit.at);
+}
+
+async function downloadActive() {
+  if (!active) return;
+  const response = await fetch(`${worker}/api/media/${active.id}?access=${encodeURIComponent(token)}`);
+  if (!response.ok) throw new Error("download");
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  const name = (devices.find((device) => device.id === selectedId) || {}).name || "register";
+  link.href = url;
+  link.download = `${name}-${formatClock(active.startedAtMs).replace(/[: ]/g, "-")}.mp4`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function showPicture(img, url, onMiss) {
@@ -542,11 +892,11 @@ class LiveFeed {
   }
 
   note(text) {
-    if (!this.announce) return;
+    if (!this.announce || showingPlayback) return;
     feedNote = text;
     if (!document.getElementById("lockToggle").classList.contains("on")) {
       const state = document.getElementById("liveState");
-      if (text) state.textContent = text;
+      if (text) state.textContent = "Live · " + text;
     }
   }
 }
@@ -665,9 +1015,7 @@ class PushFeed {
   healthy(id) {
     if (this.id !== id) return false;
     if (this.connecting || this.reviveTimer) return true;
-    if (!this.socket || this.socket.readyState > 1) return false;
-    const since = this.lastMessageAt || this.openedAt || 0;
-    return Boolean(since) && Date.now() - since < 8000;
+    return Boolean(this.socket) && this.socket.readyState <= 1;
   }
 
   start(id) {
@@ -677,27 +1025,54 @@ class PushFeed {
 
   revive(id) {
     const nextId = id || this.id;
-    if (!nextId || this.reviveTimer) return;
-    const wait = this.openedAt && Date.now() - this.openedAt < 1500 ? 1500 - (Date.now() - this.openedAt) : 0;
+    if (!nextId) return;
+    if (this.socket && this.socket.readyState <= 1 && this.id === nextId) return;
+    if (this.reviveTimer) {
+      clearTimeout(this.reviveTimer);
+      this.reviveTimer = 0;
+    }
+    const switching = Boolean(this.id) && this.id !== nextId;
+    const wait = switching ? 0 : (this.openedAt && Date.now() - this.openedAt < 1500 ? 1500 - (Date.now() - this.openedAt) : 0);
     this.reviveTimer = setTimeout(() => {
       this.reviveTimer = 0;
       if (!nextId) return;
+      if (this.socket && this.socket.readyState <= 1 && this.id === nextId) return;
       this.id = nextId;
       this.generation = (this.generation || 0) + 1;
       this.closeSocket();
-      try { this.video.srcObject = null; } catch (error) {}
       this.queue = [];
       this.meta = null;
       this.hold = new Map();
       this.nextSeq = null;
       this.gapSince = 0;
+      if (switching) this.resetMedia();
       this.open(nextId, this.generation);
     }, wait);
   }
 
   heal() {
+    const stale = Boolean(this.source && this.lastMessageAt && Date.now() - this.lastMessageAt > 8000);
+    if (stale) this.video.dataset.quiet = "1";
+    else if (this.lastMessageAt) delete this.video.dataset.quiet;
+    if (this.id && this.socket && this.socket.readyState === 1 && this.lastMessageAt && Date.now() - this.lastMessageAt > 20000) {
+      this.lastMessageAt = Date.now();
+      this.reopenSocket();
+      return;
+    }
     if (!this.id || this.healthy(this.id)) return;
     this.revive(this.id);
+  }
+
+  reopenSocket() {
+    if (!this.id || this.connecting) return;
+    this.generation = (this.generation || 0) + 1;
+    this.closeSocket();
+    this.queue = [];
+    this.meta = null;
+    this.hold = new Map();
+    this.nextSeq = null;
+    this.gapSince = 0;
+    this.open(this.id, this.generation);
   }
 
   closeSocket() {
@@ -719,7 +1094,7 @@ class PushFeed {
       const head = await api(`/api/stream/${encodeURIComponent(id)}/${this.kind}/head`);
       const initRes = await fetch(`${worker}/api/stream/${encodeURIComponent(id)}/${this.kind}/init?access=${encodeURIComponent(token)}`, { cache: "no-store" });
       if (this.generation !== generation || this.id !== id) return;
-      if (head && initRes.ok) await this.attach(head.codec || "avc1.42E01E", await initRes.arrayBuffer());
+      if (!this.source && head && initRes.ok) await this.attach(head.codec || "avc1.42E01E", await initRes.arrayBuffer());
     } catch (error) {
       if (this.generation === generation && this.id === id) this.note("Waiting for live video from the register.");
     }
@@ -814,7 +1189,9 @@ class PushFeed {
         this.meta = null;
         if (!meta) continue;
         if (meta.type === "init") {
-          if (!this.source) await this.attach(meta.codec || "avc1.42E01E", item);
+          this.codec = meta.codec || this.codec;
+          this.initBytes = item;
+          if (!this.source) await this.attach(this.codec, item);
           continue;
         }
         if (!this.source) continue;
@@ -937,11 +1314,14 @@ class PushFeed {
 
   edge() {
     const video = this.video;
-    if (!video.buffered.length || video.seeking) return;
+    if (!video.buffered.length) return;
     const end = video.buffered.end(video.buffered.length - 1);
     const start = video.buffered.start(video.buffered.length - 1);
     const lag = end - video.currentTime;
-    if (video.currentTime < start || lag > 1.2) video.currentTime = Math.max(start, end - 0.2);
+    const outside = video.currentTime < start || video.currentTime > end;
+    if (outside || lag > 1.2) {
+      try { video.currentTime = Math.max(start, end - 0.2); } catch (error) {}
+    }
     if (video.paused) video.play().catch(() => {});
   }
 
@@ -952,7 +1332,8 @@ class PushFeed {
     const start = video.buffered.start(0);
     const end = video.buffered.end(video.buffered.length - 1);
     if (end - start < 8) return Promise.resolve();
-    const cut = end - 4;
+    const behind = video.currentTime - 1;
+    const cut = Math.min(end - 4, behind);
     if (cut <= start + 0.2) return Promise.resolve();
     return new Promise((resolve) => {
       const done = () => {
@@ -993,10 +1374,11 @@ class PushFeed {
   }
 
   note(text) {
+    if (showingPlayback) return;
     const rates = [screenPush && screenPush.fpsLabel, cameraPush && cameraPush.fpsLabel, screenFeed && screenFeed.fpsLabel, cameraFeed && cameraFeed.fpsLabel].filter(Boolean);
     feedNote = rates.length ? rates.join(" · ") : (this.announce ? text : feedNote);
     if (!document.getElementById("lockToggle").classList.contains("on") && feedNote) {
-      document.getElementById("liveState").textContent = feedNote;
+      document.getElementById("liveState").textContent = "Live · " + feedNote;
     }
   }
 }
@@ -1219,12 +1601,13 @@ class RtcFeed {
   }
 
   note(text) {
+    if (showingPlayback) return;
     const rates = [screenFeed && screenFeed.fpsLabel, cameraFeed && cameraFeed.fpsLabel].filter(Boolean);
     feedNote = rates.length ? rates.join(" · ") : (this.announce ? text : feedNote);
     if (!this.announce && !rates.length) return;
     if (!document.getElementById("lockToggle").classList.contains("on")) {
       const state = document.getElementById("liveState");
-      if (feedNote) state.textContent = feedNote;
+      if (feedNote) state.textContent = "Live · " + feedNote;
     }
   }
 }
@@ -1233,37 +1616,61 @@ const screenFeed = new RtcFeed(live, "screen", true);
 const cameraFeed = new RtcFeed(camera, "camera", false);
 screenPush = new PushFeed(live, "screen", true);
 cameraPush = new PushFeed(camera, "camera", false);
+const overheadPush = new PushFeed(overhead, "overhead", false);
 
-function syncLive(id, cameraOnNow) {
-  screenPush.start(id);
-  screenFeed.start(id);
+function syncLive(id, cameraOnNow, overheadOn) {
+  if (screenFeed.id) screenFeed.stop();
+  if (cameraFeed.id) cameraFeed.stop();
+  if (screenPush.id !== id) screenPush.start(id);
+  else if (!screenPush.healthy(id)) screenPush.revive(id);
   if (cameraOnNow) {
-    camera.hidden = false;
-    cameraPush.start(id);
-    cameraFeed.start(id);
-  } else {
+    if (!showingPlayback) camera.hidden = false;
+    if (cameraPush.id !== id) cameraPush.start(id);
+    else if (!cameraPush.healthy(id)) cameraPush.revive(id);
+  } else if (cameraPush.id) {
     cameraPush.stop();
-    cameraFeed.stop();
-    camera.hidden = true;
+    if (!showingPlayback) camera.hidden = true;
+  }
+  if (overheadOn) {
+    if (!showingPlayback) overhead.hidden = false;
+    if (overheadPush.id !== id) overheadPush.start(id);
+    else if (!overheadPush.healthy(id)) overheadPush.revive(id);
+  } else if (overheadPush.id) {
+    overheadPush.stop();
+    if (!showingPlayback) overhead.hidden = true;
   }
 }
 
 if (token) {
   showApp();
   dayInput.value = todayIso();
-  refresh().catch(() => showLogin());
+  refresh().catch((error) => {
+    if (error && error.message === "auth") return;
+  });
 }
 setInterval(() => {
   if (!appView.hidden) refresh().catch(() => {});
 }, 4000);
 
-function resumeLive(force) {
-  if (appView.hidden) return;
-  if (screenPush && screenPush.id && (force || !screenPush.healthy(screenPush.id))) screenPush.revive();
-  if (cameraPush && cameraPush.id && (force || !cameraPush.healthy(cameraPush.id))) cameraPush.revive();
+function deviceOnline(device) {
+  if (!device) return false;
+  if (typeof device.online === "boolean") return device.online;
+  const seen = Number(device.lastSeen || 0);
+  return seen > 0 && Date.now() - seen < 90_000;
 }
 
-window.addEventListener("online", () => resumeLive(true));
+function resumeLive() {
+  if (!storedToken()) return;
+  if (appView.hidden) showApp();
+  refresh().catch((error) => {
+    if (error && error.message === "auth") return;
+  });
+  if (screenPush && screenPush.id && !screenPush.healthy(screenPush.id)) screenPush.revive();
+  if (cameraPush && cameraPush.id && !cameraPush.healthy(cameraPush.id)) cameraPush.revive();
+  if (overheadPush && overheadPush.id && !overheadPush.healthy(overheadPush.id)) overheadPush.revive();
+}
+
+window.addEventListener("online", () => resumeLive());
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) resumeLive(false);
+  if (!document.hidden) resumeLive();
 });

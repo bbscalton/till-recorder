@@ -25,7 +25,24 @@ sealed class RecorderEngine : IDisposable
         Stop();
         cancel = new CancellationTokenSource();
         var token = cancel.Token;
-        loop = Task.Run(() => Run(settings, token), token);
+        loop = Task.Run(async () =>
+        {
+            while (!token.IsCancellationRequested)
+            {
+                try
+                {
+                    await Run(settings, token);
+                }
+                catch (Exception error) when (!token.IsCancellationRequested)
+                {
+                    AppLog.Write("loop " + error.GetType().Name + " " + error.Message);
+                }
+                if (token.IsCancellationRequested) break;
+                Status = "Reconnecting";
+                AppLog.Write("capture retry");
+                try { await Task.Delay(2000, token); } catch { break; }
+            }
+        }, token);
     }
 
     public void Stop()
@@ -42,12 +59,16 @@ sealed class RecorderEngine : IDisposable
     {
         MediaFactoryStartup.Ensure();
         using var desktop = new DesktopCapture();
-        if (!desktop.Open())
+        var desktopOpen = desktop.Open();
+        if (!desktopOpen) AppLog.Write("desktop duplication unavailable");
+        var seeded = desktop.GrabStill();
+        if (seeded == null && !desktopOpen)
         {
             Status = "The desktop could not be captured";
+            AppLog.Write("desktop capture failed");
             return;
         }
-        var screenSize = FrameScale.Fit(desktop.Width, desktop.Height, 960);
+        var screenSize = FrameScale.Fit(seeded?.Width ?? desktop.Width, seeded?.Height ?? desktop.Height, 960);
         using var screenEncoder = H264Encoder.TryCreate(screenSize.Width, screenSize.Height, ScreenFps, 1_500_000);
         if (screenEncoder == null)
         {
@@ -63,33 +84,62 @@ sealed class RecorderEngine : IDisposable
         long screenMotionAt = 0;
         long cameraMotionAt = 0;
         var cameraWanted = false;
-        WebcamCapture? webcam = null;
+        using var webcam = new WebcamPump();
         H264Encoder? cameraEncoder = null;
         Nv12Frame? cameraSize = null;
         using var microphone = Microphone.TryOpen();
         MicrophoneOpen = microphone != null;
+        AppLog.Write(microphone == null ? "microphone none" : "microphone open");
+        using var overheadRelay = new OverheadRelay();
         var screenCount = 0;
+        var screenInputs = 0;
         var cameraCount = 0;
         var screenWindow = Environment.TickCount64;
         var cameraWindow = screenWindow;
         var nextHeartbeat = 0L;
+        var heartbeatGap = 5_000L;
         var nextScreen = 0L;
-        BgraFrame? latestDesktop = null;
+        var nextCamera = 0L;
+        BgraFrame? latestDesktop = seeded;
+        var loggedGrab = false;
+        var loggedEncodeWait = false;
         Status = "Watching the desktop";
+        AppLog.Write("capture started " + screenSize.Width + "x" + screenSize.Height);
 
         while (!token.IsCancellationRequested)
         {
+            try
+            {
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             if (now >= nextHeartbeat)
             {
-                nextHeartbeat = now + 5000;
                 var control = await shop.Heartbeat(settings, screenClip.IsOpen || cameraClip.IsOpen, token);
-                if (control != null) cameraWanted = control.Camera;
+                heartbeatGap = control == null ? Math.Min(30_000, heartbeatGap * 2) : 5_000;
+                nextHeartbeat = now + heartbeatGap;
+                overheadRelay.Apply(CameraAddress.Pull(settings), shop, settings);
+                if (control != null)
+                {
+                    if (control.Camera != cameraWanted)
+                        AppLog.Write(control.Camera ? "camera on" : "camera off");
+                    cameraWanted = control.Camera;
+                    var label = CameraAddress.Label(settings.Overhead ?? "");
+                    if (!string.Equals(label, control.Overhead ?? "", StringComparison.Ordinal))
+                        _ = shop.PublishOverhead(settings, label.Length > 0, label, CancellationToken.None);
+                }
                 await UploadPending(settings, token);
+                var typed = TypedInput.Drain();
+                if (typed.Count > 0 && !await shop.UploadInputs(settings, typed, token))
+                    TypedInput.Restore(typed);
             }
 
-            var grabbed = desktop.TryGrab(30);
+            var grabbed = desktopOpen ? desktop.TryGrab(8) : null;
+            if (grabbed == null && latestDesktop == null) grabbed = desktop.GrabStill();
             if (grabbed != null) latestDesktop = grabbed;
+            if (!loggedGrab && latestDesktop != null)
+            {
+                loggedGrab = true;
+                AppLog.Write("screen frame " + latestDesktop.Width + "x" + latestDesktop.Height);
+            }
             if (latestDesktop != null && Environment.TickCount64 >= nextScreen)
             {
                 nextScreen = Environment.TickCount64 + 1000 / ScreenFps;
@@ -98,38 +148,47 @@ sealed class RecorderEngine : IDisposable
                 if (screenGrid != null && FrameScale.ChangedFraction(screenGrid, grid) >= MotionFraction)
                     screenMotionAt = now;
                 screenGrid = grid;
-                var encoded = screenEncoder.Encode(nv12, screenLive.NeedsKeyframe);
-                if (encoded != null)
+                var encoded = screenEncoder.Encode(nv12, screenInputs == 0 || (screenLive.NeedsKeyframe && screenInputs % 30 == 0));
+                screenInputs++;
+                if (encoded == null && !loggedEncodeWait)
                 {
+                    loggedEncodeWait = true;
+                    AppLog.Write("screen encode waiting");
+                }
+                if (encoded != null && encoded.AnnexB.Length > 0)
+                {
+                    if (screenCount == 0) AppLog.Write("screen encode " + encoded.AnnexB.Length + " key " + encoded.Keyframe);
                     screenCount++;
                     Note(encoded, screenEncoder, screenLive, screenClip, "screen", now);
                 }
             }
 
-            if (cameraWanted && webcam == null)
+            if (cameraWanted && !webcam.Running)
             {
-                webcam = WebcamCapture.TryOpen();
-                WebcamOpen = webcam != null;
-                if (webcam != null)
+                webcam.Start();
+                WebcamOpen = webcam.Opened;
+                AppLog.Write(webcam.Opened ? "webcam open " + webcam.Name + " " + webcam.Width + "x" + webcam.Height : "webcam none");
+                if (webcam.Opened)
                 {
                     var fitted = FrameScale.Fit(webcam.Width, webcam.Height, 960);
                     cameraEncoder = H264Encoder.TryCreate(fitted.Width, fitted.Height, CameraFps, 900_000);
                     cameraSize = null;
+                    if (cameraEncoder == null) AppLog.Write("camera encoder failed");
                 }
             }
-            if (!cameraWanted && webcam != null)
+            if (!cameraWanted && webcam.Running)
             {
                 cameraClip.Close(now);
-                webcam.Dispose();
-                webcam = null;
+                webcam.Stop();
                 cameraEncoder?.Dispose();
                 cameraEncoder = null;
                 WebcamOpen = false;
                 cameraLive.Reset();
             }
-            if (webcam != null && cameraEncoder != null)
+            if (webcam.Opened && cameraEncoder != null && Environment.TickCount64 >= nextCamera)
             {
-                var raw = webcam.TryRead();
+                nextCamera = Environment.TickCount64 + 1000 / CameraFps;
+                var raw = webcam.Latest();
                 if (raw != null)
                 {
                     var fitted = FrameScale.Fit(raw.Width, raw.Height, 960);
@@ -140,7 +199,7 @@ sealed class RecorderEngine : IDisposable
                         var bgra = Nv12ToBgra(raw);
                         nv12 = FrameScale.ToNv12(bgra, fitted.Width, fitted.Height);
                     }
-                    if (cameraEncoder != null && (cameraSize == null || cameraSize.Width != nv12.Width))
+                    if (cameraSize == null || cameraSize.Width != nv12.Width || cameraSize.Height != nv12.Height)
                     {
                         cameraEncoder.Dispose();
                         cameraEncoder = H264Encoder.TryCreate(nv12.Width, nv12.Height, CameraFps, 900_000);
@@ -159,7 +218,6 @@ sealed class RecorderEngine : IDisposable
                     }
                 }
             }
-            if (microphone != null) microphone.TryRead();
 
             var screenHot = now - screenMotionAt < QuietMs && screenMotionAt > 0;
             var cameraHot = cameraWanted && now - cameraMotionAt < QuietMs && cameraMotionAt > 0;
@@ -173,6 +231,7 @@ sealed class RecorderEngine : IDisposable
             if (tick - screenWindow >= 5000)
             {
                 ScreenEncodeFps = screenCount * 1000.0 / (tick - screenWindow);
+                AppLog.Write("alive screen " + screenCount + " camera " + cameraCount + (WebcamOpen ? " webcam-open" : " webcam-off"));
                 screenCount = 0;
                 screenWindow = tick;
             }
@@ -185,6 +244,14 @@ sealed class RecorderEngine : IDisposable
             else if (!cameraWanted)
             {
                 CameraEncodeFps = 0;
+            }
+            Thread.Sleep(5);
+            }
+            catch (Exception error) when (!token.IsCancellationRequested)
+            {
+                AppLog.Write("capture " + error.GetType().Name + " " + error.Message);
+                Status = "Recorder hit an error and is retrying";
+                Thread.Sleep(500);
             }
         }
 
@@ -237,9 +304,9 @@ sealed class RecorderEngine : IDisposable
                     File.Delete(jsonPath);
                 }
             }
-            catch
+            catch (Exception error) when (!token.IsCancellationRequested)
             {
-                return;
+                AppLog.Write("clip file " + error.GetType().Name);
             }
         }
     }
@@ -290,6 +357,7 @@ sealed class LivePublisher
     readonly ShopClient shop;
     readonly AppSettings settings;
     readonly string kind;
+    readonly object gate = new();
     readonly List<Fmp4Muxer.Sample> batch = new();
     Fmp4Muxer? muxer;
     int sequence = 1;
@@ -305,36 +373,58 @@ sealed class LivePublisher
 
     public void Reset()
     {
-        muxer = null;
-        sequence = 1;
-        batch.Clear();
-        NeedsKeyframe = true;
+        lock (gate)
+        {
+            muxer = null;
+            sequence = 1;
+            batch.Clear();
+            NeedsKeyframe = true;
+        }
     }
 
     public void Accept(H264Encoder encoder, bool keyframe, byte[] avcc)
     {
         if (encoder.Sps == null || encoder.Pps == null) return;
-        if (muxer == null)
+        byte[]? outbound = null;
+        var outboundSeq = 0;
+        lock (gate)
         {
-            if (!keyframe) return;
-            muxer = new Fmp4Muxer(encoder.Width, encoder.Height, kind == "camera" ? RecorderEngine.CameraFps : RecorderEngine.ScreenFps);
-            var init = muxer.Start(encoder.Sps, encoder.Pps);
-            _ = shop.UploadStream(settings, kind, 0, init, encoder.Codec, CancellationToken.None);
-            sequence = 1;
-            NeedsKeyframe = false;
+            if (muxer == null)
+            {
+                if (!keyframe) return;
+                muxer = new Fmp4Muxer(encoder.Width, encoder.Height, kind == "camera" ? RecorderEngine.CameraFps : RecorderEngine.ScreenFps);
+                outbound = muxer.Start(encoder.Sps, encoder.Pps);
+                outboundSeq = 0;
+                sequence = 1;
+                NeedsKeyframe = false;
+            }
+            if (keyframe) NeedsKeyframe = false;
+            batch.Add(new Fmp4Muxer.Sample(avcc, keyframe, 0));
+            var now = Environment.TickCount64;
+            if (batchStarted == 0) batchStarted = now;
+            if (outbound == null && (batch.Count >= 6 || now - batchStarted >= 200))
+            {
+                var bytes = muxer!.Media(batch);
+                batch.Clear();
+                batchStarted = now;
+                if (bytes.Length > 0)
+                {
+                    outbound = bytes;
+                    outboundSeq = sequence++;
+                }
+                if (now % 1000 < 50) NeedsKeyframe = true;
+            }
         }
-        if (keyframe) NeedsKeyframe = false;
-        batch.Add(new Fmp4Muxer.Sample(avcc, keyframe, 0));
-        var now = Environment.TickCount64;
-        if (batchStarted == 0) batchStarted = now;
-        if (batch.Count < 6 && now - batchStarted < 200) return;
-        var bytes = muxer.Media(batch);
-        batch.Clear();
-        batchStarted = now;
-        if (bytes.Length == 0) return;
-        var seq = sequence++;
-        _ = shop.UploadStream(settings, kind, seq, bytes, encoder.Codec, CancellationToken.None);
-        if (now % 1000 < 50) NeedsKeyframe = true;
+        if (outbound != null) Send(outboundSeq, outbound, encoder.Codec);
+    }
+
+    void Send(int sequence, byte[] bytes, string codec)
+    {
+        _ = shop.UploadStream(settings, kind, sequence, bytes, codec, CancellationToken.None).ContinueWith(task =>
+        {
+            var stored = task.Status == TaskStatus.RanToCompletion && task.Result;
+            if (!stored) Reset();
+        });
     }
 }
 

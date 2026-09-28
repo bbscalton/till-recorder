@@ -79,6 +79,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
         binding.savePinButton.setOnClickListener { savePin() }
+        binding.findCameras.setOnClickListener { findCameras() }
+        binding.saveCamera.setOnClickListener { saveCamera(clear = false) }
+        binding.clearCamera.setOnClickListener { saveCamera(clear = true) }
         binding.confirmPin.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_DONE) {
                 savePin()
@@ -284,10 +287,120 @@ class MainActivity : AppCompatActivity() {
             status.detail.isNotBlank() -> status.detail
             else -> getString(R.string.status_idle)
         }
+        store.migrateOverheadCredentials()
+        if (!binding.cameraUrl.hasFocus() && binding.cameraUrl.text?.toString().orEmpty() != store.overheadUrl) {
+            binding.cameraUrl.setText(store.overheadUrl)
+        }
+        if (!binding.cameraUser.hasFocus() && binding.cameraUser.text?.toString().orEmpty() != store.overheadUser) {
+            binding.cameraUser.setText(store.overheadUser)
+        }
+        if (!binding.cameraPassword.hasFocus() && binding.cameraPassword.text?.toString().orEmpty() != store.overheadPassword) {
+            binding.cameraPassword.setText(store.overheadPassword)
+        }
         binding.pendingText.text = when (pending) {
             0 -> getString(R.string.pending_clear)
             1 -> "1 clip is still on this tablet and will send when Cloudflare is reachable."
             else -> "$pending clips are still on this tablet and will send when Cloudflare is reachable."
+        }
+    }
+
+    private fun findCameras() {
+        if (controlsLocked()) return
+        binding.findCameras.isEnabled = false
+        binding.cameraStatus.setText(R.string.camera_searching)
+        binding.cameraChoices.removeAllViews()
+        lifecycleScope.launch {
+            val found = withContext(Dispatchers.IO) { OnvifDiscovery.probe(this@MainActivity) }
+            binding.findCameras.isEnabled = true
+            if (found.isEmpty()) {
+                binding.cameraStatus.setText(R.string.camera_none)
+                return@launch
+            }
+            binding.cameraStatus.setText(R.string.camera_found)
+            for (camera in found) {
+                val button = com.google.android.material.button.MaterialButton(
+                    this@MainActivity,
+                    null,
+                    com.google.android.material.R.attr.materialButtonOutlinedStyle
+                )
+                button.text = camera.host
+                button.setOnClickListener {
+                    binding.cameraUrl.setText(camera.service)
+                    if (binding.cameraUser.text.isNullOrBlank()) binding.cameraStatus.setText(R.string.camera_need_login)
+                }
+                binding.cameraChoices.addView(button)
+            }
+        }
+    }
+
+    private fun saveCamera(clear: Boolean) {
+        if (controlsLocked()) return
+        if (clear) {
+            store.overheadUrl = ""
+            store.overheadUser = ""
+            store.overheadPassword = ""
+            binding.cameraUrl.setText("")
+            binding.cameraUser.setText("")
+            binding.cameraPassword.setText("")
+            syncCamera(cleared = true)
+            return
+        }
+        val address = binding.cameraUrl.text?.toString().orEmpty().trim()
+        val user = binding.cameraUser.text?.toString().orEmpty().trim()
+        val password = binding.cameraPassword.text?.toString().orEmpty()
+        val http = address.startsWith("http://") || address.startsWith("https://")
+        val rtsp = address.startsWith("rtsp://") || address.startsWith("rtsps://")
+        if (address.isEmpty() || (!http && !rtsp)) {
+            binding.cameraStatus.setText(R.string.camera_need_rtsp)
+            return
+        }
+        if (http && user.isEmpty()) {
+            binding.cameraStatus.setText(R.string.camera_need_login)
+            return
+        }
+        binding.saveCamera.isEnabled = false
+        lifecycleScope.launch {
+            val resolved = withContext(Dispatchers.IO) {
+                if (http) {
+                    val stream = OnvifDiscovery.tryStream(address, user, password) ?: return@withContext null
+                    Triple(stream, user, password)
+                } else {
+                    val split = CameraAddress.split(address)
+                    val bare = CameraAddress.bare(address)
+                    if (user.isEmpty()) Triple(bare, split.user, split.password) else Triple(bare, user, password)
+                }
+            }
+            if (resolved == null) {
+                binding.saveCamera.isEnabled = true
+                binding.cameraStatus.setText(R.string.camera_login)
+                return@launch
+            }
+            store.overheadUrl = resolved.first
+            store.overheadUser = resolved.second
+            store.overheadPassword = resolved.third
+            binding.cameraUrl.setText(resolved.first)
+            binding.cameraUser.setText(resolved.second)
+            if (!binding.cameraPassword.hasFocus()) binding.cameraPassword.setText(resolved.third)
+            syncCamera(cleared = false)
+        }
+    }
+
+    private fun syncCamera(cleared: Boolean) {
+        binding.saveCamera.isEnabled = false
+        lifecycleScope.launch {
+            val label = store.overheadLabel()
+            val synced = withContext(Dispatchers.IO) {
+                ShopClient.setOverhead(store.current(), label.isNotEmpty(), label)
+            }
+            RecordingService.refreshOverhead()
+            binding.saveCamera.isEnabled = true
+            binding.cameraStatus.setText(
+                when {
+                    !synced -> R.string.camera_saved_local
+                    cleared -> R.string.camera_cleared
+                    else -> R.string.camera_saved
+                }
+            )
         }
     }
 

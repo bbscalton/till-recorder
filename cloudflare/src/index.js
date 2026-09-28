@@ -108,6 +108,10 @@ async function handleApi(request, env, url, ctx) {
   if (request.method === "GET" && url.pathname === "/api/rtc") return readRtc(env, url);
   if (request.method === "POST" && url.pathname === "/api/rtc") return writeRtc(request, env);
   if (request.method === "POST" && url.pathname === "/api/camera") return setCamera(request, env);
+  if (request.method === "POST" && url.pathname === "/api/staff") return setStaff(request, env);
+  if (request.method === "POST" && url.pathname === "/api/overhead") return setOverhead(request, env);
+  if (request.method === "POST" && url.pathname === "/api/overhead-scan") return requestOverheadScan(request, env);
+  if (request.method === "POST" && url.pathname === "/api/overhead-found") return saveOverheadFound(request, env);
   if (request.method === "POST" && url.pathname === "/api/lock") return setLock(request, env);
   if (request.method === "POST" && url.pathname === "/api/camera-frame") return saveCamera(request, env);
   if (request.method === "GET" && url.pathname.startsWith("/api/camera/")) {
@@ -121,6 +125,9 @@ async function handleApi(request, env, url, ctx) {
   if (request.method === "DELETE" && url.pathname.startsWith("/api/media/")) {
     return deleteSegment(env, url.pathname.slice("/api/media/".length));
   }
+  if (request.method === "POST" && url.pathname === "/api/inputs") return saveInputs(request, env);
+  if (request.method === "GET" && url.pathname === "/api/inputs") return listInputs(env, url);
+  if (request.method === "GET" && url.pathname === "/api/search") return searchInputs(env, url);
   return json({ error: "Not found" }, 404);
 }
 
@@ -236,13 +243,17 @@ async function heartbeat(request, env) {
     camera: control.camera,
     locked: control.locked,
     lockSeq: control.lockSeq,
+    cashier: control.cashier,
+    overhead: control.overhead,
+    onvif: control.onvif,
+    scan: control.scan,
   });
 }
 
 async function openLive(request, env, url) {
   const deviceId = url.searchParams.get("device_id") || "";
   const kind = url.searchParams.get("kind") || "";
-  if (!DEVICE_ID.test(deviceId) || (kind !== "screen" && kind !== "camera")) {
+  if (!DEVICE_ID.test(deviceId) || !streamKind(kind)) {
     return json({ error: "Not found" }, 404);
   }
   if (!env.LIVE_RELAY) return json({ error: "Live relay is not ready" }, 503);
@@ -267,7 +278,7 @@ async function saveStream(request, env, ctx) {
   const deviceId = request.headers.get("X-Device-Id") || "";
   if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
   const kind = request.headers.get("X-Stream-Kind") || "";
-  if (kind !== "screen" && kind !== "camera") return json({ error: "Stream is not valid" }, 400);
+  if (!streamKind(kind)) return json({ error: "Stream is not valid" }, 400);
   const seq = Number(request.headers.get("X-Stream-Seq"));
   if (!Number.isInteger(seq) || seq < 0 || seq > 1_000_000_000) return json({ error: "Stream is not valid" }, 400);
   const codec = String(request.headers.get("X-Stream-Codec") || "avc1.42E01E").replace(/[^a-zA-Z0-9.]/g, "").slice(0, 32) || "avc1.42E01E";
@@ -300,7 +311,7 @@ async function readStream(env, url) {
   const deviceId = decodeURIComponent(parts[2]);
   const kind = parts[3];
   const name = parts[4];
-  if (!DEVICE_ID.test(deviceId) || (kind !== "screen" && kind !== "camera")) return json({ error: "Not found" }, 404);
+  if (!DEVICE_ID.test(deviceId) || !streamKind(kind)) return json({ error: "Not found" }, 404);
   if (name === "head") {
     const object = await env.RECORDINGS.get(`stream/${deviceId}/${kind}/head.json`);
     if (!object) return json({ error: "No live video" }, 404);
@@ -400,23 +411,139 @@ async function readCamera(env, deviceId) {
 
 async function readControl(env, deviceId) {
   const object = await env.RECORDINGS.get(`control/${deviceId}.json`);
-  if (!object) return { camera: false, locked: false, lockSeq: 0 };
-  const parsed = await object.json();
+  const parsed = object ? await object.json() : {};
   return {
     camera: Boolean(parsed.camera),
     locked: Boolean(parsed.locked),
     lockSeq: Number(parsed.lockSeq || 0),
+    cashier: cleanStaff(parsed.cashier),
+    overhead: await rememberOverheadLabel(env, deviceId, parsed),
+    onvif: "",
+    scan: Boolean(parsed.scan),
+    cameras: storedCameras(parsed.cameras),
   };
 }
 
 async function writeControl(env, deviceId, control) {
+  const previous = await readControl(env, deviceId);
+  const next = { ...previous, ...control };
   await env.RECORDINGS.put(`control/${deviceId}.json`, JSON.stringify({
-    camera: Boolean(control.camera),
-    locked: Boolean(control.locked),
-    lockSeq: Number(control.lockSeq || 0),
+    camera: Boolean(next.camera),
+    locked: Boolean(next.locked),
+    lockSeq: Number(next.lockSeq || 0),
+    cashier: cleanStaff(next.cashier),
+    overhead: publicLabel(next.overhead),
+    onvif: "",
+    scan: Boolean(next.scan),
+    cameras: storedCameras(next.cameras),
   }), {
     httpMetadata: { contentType: "application/json" },
   });
+}
+
+function streamKind(kind) {
+  return kind === "screen" || kind === "camera" || kind === "overhead" ? kind : "";
+}
+
+function cleanStaff(name) {
+  return String(name || "").replace(/[^\x20-\x7e]/g, "").trim().slice(0, 60);
+}
+
+function cameraLabel(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (/^(rtsp|rtsps|http|https):\/\//i.test(text)) {
+    try {
+      const url = new URL(text);
+      return cleanStaff(url.hostname) || "Overhead camera";
+    } catch {
+      return "Overhead camera";
+    }
+  }
+  return cleanStaff(text);
+}
+
+function publicLabel(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (/^(rtsp|rtsps|http|https):\/\//i.test(text)) return cameraLabel(text);
+  if (text.includes("@") || text.includes("://")) return "Overhead camera";
+  return cleanStaff(text);
+}
+
+function storedCameras(list) {
+  return (Array.isArray(list) ? list : []).slice(0, 12).map((item) => ({
+    name: cleanStaff(item?.name) || "Camera",
+    host: String(item?.host || cameraLabel(item?.url || "")).replace(/[^\w.:-]/g, "").slice(0, 80),
+  })).filter((item) => item.host);
+}
+
+async function rememberOverheadLabel(env, deviceId, parsed) {
+  const stored = String(parsed?.overhead || "");
+  const label = publicLabel(stored);
+  const cameras = storedCameras(parsed?.cameras);
+  const leaked = Array.isArray(parsed?.cameras) && parsed.cameras.some((item) => item && item.url);
+  if ((stored && stored !== label) || leaked || parsed?.onvif) {
+    const next = { ...parsed, overhead: label, onvif: "", cameras };
+    await env.RECORDINGS.put(`control/${deviceId}.json`, JSON.stringify(next), {
+      httpMetadata: { contentType: "application/json" },
+    });
+  }
+  return label;
+}
+
+function cleanUrl(value) {
+  const text = String(value || "").trim().slice(0, 300);
+  if (!text) return "";
+  if (!/^(rtsp|rtsps|http|https):\/\//i.test(text)) return "";
+  return text.replace(/[\u0000-\u001f\s]/g, "");
+}
+
+async function setStaff(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const deviceId = body.device_id || "";
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  const cashier = cleanStaff(body.name);
+  const control = await readControl(env, deviceId);
+  control.cashier = cashier;
+  await writeControl(env, deviceId, control);
+  return json({ ok: true, cashier });
+}
+
+async function setOverhead(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const deviceId = body.device_id || "";
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  const fromAddress = publicLabel(body.rtsp || body.url || "");
+  const attached = body.attached === false ? false : Boolean(body.attached || body.label || fromAddress);
+  const label = attached ? (publicLabel(body.label) || fromAddress || "Overhead camera") : "";
+  const control = await readControl(env, deviceId);
+  control.overhead = label;
+  control.onvif = "";
+  await writeControl(env, deviceId, control);
+  return json({ ok: true, overhead: Boolean(label) });
+}
+
+async function requestOverheadScan(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const deviceId = body.device_id || "";
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  const control = await readControl(env, deviceId);
+  control.scan = true;
+  await writeControl(env, deviceId, control);
+  return json({ ok: true });
+}
+
+async function saveOverheadFound(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const deviceId = body.device_id || "";
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  const cameras = storedCameras(body.cameras);
+  const control = await readControl(env, deviceId);
+  control.scan = false;
+  control.cameras = cameras;
+  await writeControl(env, deviceId, control);
+  return json({ ok: true, count: cameras.length });
 }
 
 async function readLive(env, deviceId) {
@@ -450,13 +577,17 @@ async function storeSegment(request, env) {
   if (!file || typeof file.arrayBuffer !== "function") return json({ error: "Clip file is missing" }, 400);
   if (file.size > MAX_BYTES) return json({ error: "Clip is too large" }, 413);
   if (file.size < 1024) return json({ error: "Clip is empty" }, 400);
-  const kind = String(form.get("kind") || "screen") === "camera" ? "camera" : "screen";
+  const kind = streamKind(String(form.get("kind") || "screen")) || "screen";
+  const control = await readControl(env, deviceId);
   const id = crypto.randomUUID().replaceAll("-", "");
   const key = `clips/${deviceId}/${localDay}/${id}.mp4`;
   await env.RECORDINGS.put(key, await file.arrayBuffer(), {
     httpMetadata: { contentType: "video/mp4" },
   });
-  const segment = { id, deviceId, deviceName, startedAtMs, endedAtMs, bytes: file.size, key, kind };
+  const segment = {
+    id, deviceId, deviceName, startedAtMs, endedAtMs, bytes: file.size, key, kind,
+    cashier: control.cashier || "",
+  };
   await env.RECORDINGS.put(`index/${deviceId}/${localDay}/${id}.json`, JSON.stringify(segment), {
     httpMetadata: { contentType: "application/json" },
   });
@@ -473,14 +604,29 @@ async function listDevices(env) {
     const object = await env.RECORDINGS.get(item.key);
     if (!object) continue;
     const device = await object.json();
-    device.recording = Boolean(device.recording) && Date.now() - Number(device.lastSeen || 0) < 90_000;
+    const seen = Number(device.lastSeen || 0);
+    device.online = Date.now() - seen < 90_000;
+    device.recording = Boolean(device.recording) && device.online;
     if (DEVICE_ID.test(device.id || "")) {
       const control = await readControl(env, device.id);
       device.camera = Boolean(control.camera);
       device.locked = Boolean(control.locked);
+      device.cashier = control.cashier || "";
+      device.overhead = Boolean(control.overhead);
+      device.overheadLabel = control.overhead || "";
+      device.overheadUrl = "";
+      device.onvif = "";
+      device.cameras = [];
+      device.scan = Boolean(control.scan);
     } else {
       device.camera = false;
       device.locked = false;
+      device.cashier = "";
+      device.overhead = false;
+      device.overheadUrl = "";
+      device.onvif = "";
+      device.cameras = [];
+      device.scan = false;
     }
     devices.push(device);
   }
@@ -510,9 +656,10 @@ async function deleteDay(env, url) {
   const deviceId = url.searchParams.get("device_id") || "";
   const date = url.searchParams.get("date") || "";
   if (!DEVICE_ID.test(deviceId) || !DAY.test(date)) return json({ error: "Not valid" }, 400);
-  const [indexes, clips] = await Promise.all([
+  const [indexes, clips, typed] = await Promise.all([
     listAll(env, `index/${deviceId}/${date}/`),
     listAll(env, `clips/${deviceId}/${date}/`),
+    listAll(env, `inputs/${deviceId}/${date}/`),
   ]);
   const keys = [];
   for (const item of indexes) {
@@ -522,6 +669,7 @@ async function deleteDay(env, url) {
     if (SEGMENT_ID.test(id)) keys.push(`ids/${id}`);
   }
   for (const item of clips) keys.push(item.key);
+  for (const item of typed) keys.push(item.key);
   await deleteKeys(env, keys);
   return json({ ok: true, removed: indexes.length }, 200, true);
 }
@@ -534,8 +682,115 @@ async function deleteSegment(env, rawId) {
   const key = (await pointer.text()).trim();
   const match = /^clips\/([^/]+)\/(\d{4}-\d{2}-\d{2})\/([a-f0-9]{32})\.mp4$/.exec(key);
   if (!match) return json({ error: "Not found" }, 404);
-  await deleteKeys(env, [key, `index/${match[1]}/${match[2]}/${match[3]}.json`, `ids/${id}`]);
+  const indexKey = `index/${match[1]}/${match[2]}/${match[3]}.json`;
+  const keys = [key, indexKey, `ids/${id}`];
+  const stored = await env.RECORDINGS.get(indexKey);
+  if (stored) {
+    const segment = await stored.json();
+    const started = Number(segment?.startedAtMs);
+    const ended = Number(segment?.endedAtMs);
+    if (Number.isFinite(started) && Number.isFinite(ended)) {
+      const typed = await listAll(env, `inputs/${match[1]}/${match[2]}/`);
+      for (const item of typed) {
+        const name = String(item.key).split("/").pop() || "";
+        const at = Number(name.endsWith(".json") ? name.slice(0, -5) : name);
+        if (at >= started && at <= ended) keys.push(item.key);
+      }
+    }
+  }
+  await deleteKeys(env, keys);
   return json({ ok: true }, 200, true);
+}
+
+async function saveInputs(request, env) {
+  let body = {};
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: "That was not a transcript" }, 400);
+  }
+  const deviceId = body.device_id || "";
+  const day = body.local_day || "";
+  if (!DEVICE_ID.test(deviceId) || !DAY.test(day)) return json({ error: "Choose a register and a day" }, 400);
+  const control = await readControl(env, deviceId);
+  const entries = Array.isArray(body.entries) ? body.entries.slice(0, 40) : [];
+  let stored = 0;
+  for (const entry of entries) {
+    const at = Number(entry?.at);
+    const text = String(entry?.text || "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, 200);
+    if (!Number.isFinite(at) || at < 1_000_000_000_000 || !text) continue;
+    const key = `inputs/${deviceId}/${day}/${Math.trunc(at)}.json`;
+    await env.RECORDINGS.put(key, JSON.stringify({
+      at: Math.trunc(at),
+      text,
+      cashier: cleanStaff(entry?.cashier) || control.cashier || "",
+    }), {
+      httpMetadata: { contentType: "application/json" },
+    });
+    stored += 1;
+  }
+  return json({ ok: true, stored });
+}
+
+async function listInputs(env, url) {
+  const deviceId = url.searchParams.get("device_id") || "";
+  const date = url.searchParams.get("date") || "";
+  if (!DEVICE_ID.test(deviceId) || !DAY.test(date)) return json({ error: "Choose a register and a day" }, 400);
+  const keys = await listAll(env, `inputs/${deviceId}/${date}/`);
+  const entries = [];
+  for (const item of keys) {
+    const stored = await env.RECORDINGS.get(item.key);
+    if (!stored) continue;
+    const entry = await stored.json();
+    if (!entry?.text || !entry?.at) continue;
+    entries.push({ at: Number(entry.at), text: String(entry.text), cashier: cleanStaff(entry.cashier) });
+  }
+  entries.sort((a, b) => a.at - b.at);
+  return json({ entries }, 200, true);
+}
+
+async function searchInputs(env, url) {
+  const date = url.searchParams.get("date") || "";
+  const query = String(url.searchParams.get("q") || "").trim().slice(0, 80);
+  const deviceId = url.searchParams.get("device_id") || "";
+  if (!DAY.test(date) || !query) return json({ error: "Type something to search" }, 400);
+  if (deviceId && !DEVICE_ID.test(deviceId)) return json({ error: "Choose a register" }, 400);
+  const needle = query.toLowerCase();
+  const targets = [];
+  if (deviceId) {
+    const status = await env.RECORDINGS.get(`status/${deviceId}.json`);
+    const device = status ? await status.json() : {};
+    targets.push({ id: deviceId, name: device.name || "Register" });
+  } else {
+    const objects = await listAll(env, "status/");
+    for (const item of objects) {
+      const stored = await env.RECORDINGS.get(item.key);
+      if (!stored) continue;
+      const device = await stored.json();
+      if (!DEVICE_ID.test(device.id || "")) continue;
+      targets.push({ id: device.id, name: device.name || "Register" });
+    }
+  }
+  const hits = [];
+  for (const device of targets) {
+    const keys = await listAll(env, `inputs/${device.id}/${date}/`);
+    for (const item of keys) {
+      const stored = await env.RECORDINGS.get(item.key);
+      if (!stored) continue;
+      const entry = await stored.json();
+      const text = String(entry?.text || "");
+      if (!text || !text.toLowerCase().includes(needle)) continue;
+      hits.push({
+        deviceId: device.id,
+        deviceName: device.name,
+        at: Number(entry.at),
+        text,
+        cashier: cleanStaff(entry.cashier),
+      });
+    }
+  }
+  hits.sort((a, b) => a.at - b.at || String(a.deviceName).localeCompare(String(b.deviceName)));
+  return json({ query, hits }, 200, true);
 }
 
 async function readMedia(request, env, id) {

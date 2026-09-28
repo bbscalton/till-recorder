@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Till Recorder — the register screen, beside your camera</title>
-  <meta name="description" content="Till Recorder saves the point-of-sale screen on an Android tablet or a Windows PC. Watch it live, or play the day back.">
+  <meta name="description" content="Till Recorder saves the point-of-sale screen on an Android tablet or a Windows PC. Watch the registers live, search what was typed, or play the day back.">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -26,7 +26,7 @@
       <div class="hero-copy">
         <p class="kicker">Beside the camera you already have</p>
         <h1>See what they did on the register.</h1>
-        <p class="lead">The camera shows the counter. Till Recorder shows the register screen, on an Android tablet or a Windows point-of-sale PC. It saves a clip while someone is using the screen, then you watch that register live or play the day back.</p>
+        <p class="lead">The camera shows the counter. Till Recorder shows the register screen, on an Android tablet or a Windows point-of-sale PC. It saves a clip while someone is using the screen, then you watch every register live or play the day back.</p>
         <div class="actions">
           <a class="button" href="watch.html">Watch a register</a>
           <a class="button quiet" href="#install">Get the app</a>
@@ -77,12 +77,12 @@
         <li>
           <span>02</span>
           <h3>Pair it once</h3>
-          <p>On the watch page, press Pair a register and type that code into the tablet or the Windows app. You do not type a long token. Android captures the screen itself, so there is no system screen-share prompt. Turn on Till Recorder in Accessibility one time. It stays on after that, including after a restart, and a notice stays visible. Windows pairs with the code and records from the tray.</p>
+          <p>On the watch page, press Pair a register and type that code into the tablet or the Windows app. You do not type a web address or a token on the till. Android captures the screen itself, so there is no system screen-share prompt. Turn on Till Recorder in Accessibility one time. It stays on after that, including after a restart, and a notice stays visible. Windows pairs with the code and records from the tray. If watching was already on, the till starts again after its own restart.</p>
         </li>
         <li>
           <span>03</span>
           <h3>Watch from here</h3>
-          <p>Both registers appear on the same watch page. Turn the front camera or the webcam on and off from that page. Android live screen is about 3 frames a second, because the phone screenshot is that slow. The Windows desktop is smooth, about 15 to 30 frames a second or faster. The camera is real video. Delete one clip, or delete the whole day.</p>
+          <p>The watch page opens as a wall of tills. Open one to see the live screen, the front camera, and what was typed, all at the same moment. Set the cashier’s name for that stretch. Search a word or an amount, such as 10000, and the recording jumps to the second it was typed. Download one clip before you delete it, or delete a clip or a whole day. The page stays signed in, and the live view comes back after the monitoring computer loses internet or restarts. Android live screen is about 3 frames a second. The Windows desktop is smooth.</p>
         </li>
       </ol>
     </section>
@@ -90,19 +90,21 @@
     <section class="install" id="install">
       <div>
         <h2>Two downloads</h2>
-        <p>The Android APK is for the tablet. The Windows zip is for the point-of-sale PC: unzip it and run TillRecorder.exe. Pair either one with a code from the watch page. The Windows app records the desktop and the webcam and stays in the tray. Recordings upload to your Cloudflare account. This website is where you watch them.</p>
+        <p>The Android APK is for the tablet. The Windows zip is for the point-of-sale PC: unzip it and run TillRecorder.exe. Pair either one with a code from the watch page. You do not type a web address or a token on the till. The Windows app records the desktop and the webcam and stays in the tray. An overhead IP camera is added on the till itself: Windows uses Add camera on the tray menu, and Android uses Overhead camera in the app. Enter an RTSP or ONVIF address and the camera username and password there. Find cameras looks on the store network, and the username and password are entered before the camera is saved. The watch page shows the picture that till sends. It does not show the password, and the manager does not paste the camera address into the website. Recordings upload to your Cloudflare account. This website is where you watch them.</p>
         <div class="actions">
-          <a class="button" href="https://github.com/bbscalton/till-recorder/releases/download/v1.5.4/till-recorder.apk">Download the Android APK</a>
-          <a class="button" href="https://github.com/bbscalton/till-recorder/releases/download/v1.5.4/till-recorder-windows.zip">Download for Windows</a>
+          <a class="button" href="https://github.com/bbscalton/till-recorder/releases/download/v1.5.9/till-recorder.apk">Download the Android APK</a>
+          <a class="button" href="https://github.com/bbscalton/till-recorder/releases/download/v1.5.9/till-recorder-windows.zip">Download for Windows</a>
         </div>
       </div>
       <ul>
-        <li>Pairs with a code from the watch page</li>
-        <li>Records while the screen is changing</li>
-        <li>Android live screen is about 3 fps. Windows desktop is about 15–30+ fps</li>
-        <li>Front camera and webcam are real video, on and off from the watch page</li>
-        <li>Delete a clip, or delete a whole day</li>
-        <li>Card numbers can appear in a clip if the register shows them</li>
+        <li>Pairs with a code from the watch page. No web address or token on the till</li>
+        <li>Wall of tills, live screen and camera, and the cashier’s name</li>
+        <li>Search a word or an amount and the recording jumps to that second</li>
+        <li>Download one clip, or delete a clip or a whole day</li>
+        <li>Overhead camera is added on the till, then shown on the watch page</li>
+        <li>Android live screen is about 3 fps. Windows desktop is smooth</li>
+        <li>Stays signed in, and live view reconnects after the monitoring computer restarts</li>
+        <li>Card numbers can appear in the video and in the typed log if the register shows or asks for them</li>
       </ul>
     </section>
   </main>

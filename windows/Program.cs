@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Drawing.Imaging;
+using Microsoft.Win32;
 
 namespace TillRecorder;
 
@@ -153,15 +154,36 @@ sealed class TrayApp : ApplicationContext
         menu.Items.Add("Start", null, (_, _) => Start());
         menu.Items.Add("Stop", null, (_, _) => Stop());
         menu.Items.Add("Pair…", null, (_, _) => Pair());
+        menu.Items.Add("Add camera…", null, (_, _) => AddCamera());
         menu.Items.Add("Open watch page", null, (_, _) => Process.Start(new ProcessStartInfo(ShopClient.BaseUrl + "/watch") { UseShellExecute = true }));
         menu.Items.Add("Quit", null, (_, _) => ExitThread());
         icon.ContextMenuStrip = menu;
         icon.DoubleClick += (_, _) => { if (settings.Paired && !settings.Armed) Start(); };
         timer = new System.Windows.Forms.Timer { Interval = 1000 };
-        timer.Tick += (_, _) => icon.Text = Trim(engine.Status);
+        timer.Tick += (_, _) =>
+        {
+            TypedInput.Tick();
+            icon.Text = Trim(engine.Status);
+        };
         timer.Start();
+        if (settings.Paired) RegisterStartup();
         if (settings.Paired && settings.Armed) Start();
         else if (!settings.Paired) Pair();
+    }
+
+    static void RegisterStartup()
+    {
+        try
+        {
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrWhiteSpace(exe)) return;
+            using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
+            key?.SetValue("TillRecorder", "\"" + exe + "\"");
+        }
+        catch (Exception error)
+        {
+            AppLog.Write("startup " + error.GetType().Name);
+        }
     }
 
     void Start()
@@ -173,6 +195,8 @@ sealed class TrayApp : ApplicationContext
         }
         settings.Armed = true;
         settings.Save();
+        RegisterStartup();
+        TypedInput.Install();
         engine.Start(settings);
         icon.Text = "Starting";
     }
@@ -181,20 +205,44 @@ sealed class TrayApp : ApplicationContext
     {
         settings.Armed = false;
         settings.Save();
+        TypedInput.Remove();
+        var typed = TypedInput.Drain();
+        if (typed.Count > 0)
+        {
+            try
+            {
+                var stored = Task.Run(() => new ShopClient().UploadInputs(settings, typed, CancellationToken.None)).GetAwaiter().GetResult();
+                if (!stored) TypedInput.Restore(typed);
+            }
+            catch
+            {
+                TypedInput.Restore(typed);
+            }
+        }
         engine.Stop();
         icon.Text = "Stopped";
     }
 
     void Pair()
     {
-        using var form = new PairForm(settings.DeviceName);
-        if (form.ShowDialog() != DialogResult.OK) return;
-        settings.DeviceName = ShopClient.Clean(form.RegisterName);
+        TypedInput.Pause();
+        DialogResult result;
+        string registerName;
+        string pairCode;
+        using (var form = new PairForm(settings.DeviceName))
+        {
+            result = form.ShowDialog();
+            registerName = form.RegisterName;
+            pairCode = form.PairCode;
+        }
+        TypedInput.Resume();
+        if (result != DialogResult.OK) return;
+        settings.DeviceName = ShopClient.Clean(registerName);
         if (string.IsNullOrWhiteSpace(settings.DeviceId)) settings.DeviceId = Guid.NewGuid().ToString("N");
         string? token = null;
         try
         {
-            token = Task.Run(() => new ShopClient().ClaimPair(settings.DeviceId, settings.DeviceName, form.PairCode, CancellationToken.None)).GetAwaiter().GetResult();
+            token = Task.Run(() => new ShopClient().ClaimPair(settings.DeviceId, settings.DeviceName, pairCode, CancellationToken.None)).GetAwaiter().GetResult();
         }
         catch
         {
@@ -210,11 +258,53 @@ sealed class TrayApp : ApplicationContext
         Start();
     }
 
+    void AddCamera()
+    {
+        TypedInput.Pause();
+        DialogResult result;
+        string url;
+        string user;
+        string password;
+        var existing = CameraAddress.Split(settings.Overhead ?? "");
+        var currentUser = string.IsNullOrEmpty(settings.OverheadUser) ? existing.User : settings.OverheadUser;
+        var currentPassword = string.IsNullOrEmpty(settings.OverheadPassword) ? existing.Password : settings.OverheadPassword;
+        using (var form = new CameraForm(existing.Bare, currentUser ?? "", currentPassword ?? ""))
+        {
+            result = form.ShowDialog();
+            url = form.CameraUrl;
+            user = form.CameraUser;
+            password = form.CameraPassword;
+        }
+        TypedInput.Resume();
+        if (result != DialogResult.OK) return;
+        settings.Overhead = url;
+        settings.OverheadUser = user;
+        settings.OverheadPassword = password;
+        settings.Save();
+        var label = CameraAddress.Label(url);
+        var synced = false;
+        try
+        {
+            synced = Task.Run(() => new ShopClient().PublishOverhead(settings, label.Length > 0, label, CancellationToken.None)).GetAwaiter().GetResult();
+        }
+        catch
+        {
+            synced = false;
+        }
+        var message = url.Length == 0
+            ? "Cleared the overhead camera."
+            : synced
+                ? "Saved. This register will pull that camera from the store network."
+                : "Saved on this computer. It will sync when the register can reach the watch page.";
+        MessageBox.Show(message, "Till Recorder");
+    }
+
     static string Trim(string text) => text.Length <= 60 ? text : text[..60];
 
     protected override void ExitThreadCore()
     {
         timer.Stop();
+        TypedInput.Remove();
         engine.Dispose();
         icon.Visible = false;
         icon.Dispose();
@@ -255,5 +345,147 @@ sealed class PairForm : Form
                 MessageBox.Show("Enter the register name and the 6-character pair code.", "Till Recorder");
             }
         };
+    }
+}
+
+sealed class CameraForm : Form
+{
+    readonly TextBox urlBox = new() { Width = 400 };
+    readonly TextBox userBox = new() { Width = 400 };
+    readonly TextBox passwordBox = new() { Width = 400, UseSystemPasswordChar = true };
+    readonly ListBox found = new() { Width = 400, Height = 90 };
+    readonly Label status = new() { AutoSize = true, MaximumSize = new Size(400, 0) };
+    readonly Button find = new() { Text = "Find cameras", Width = 120 };
+    readonly List<string> addresses = new();
+    public string CameraUrl { get; private set; } = "";
+    public string CameraUser { get; private set; } = "";
+    public string CameraPassword { get; private set; } = "";
+
+    public CameraForm(string current, string user, string password)
+    {
+        Text = "Add overhead camera";
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        StartPosition = FormStartPosition.CenterScreen;
+        ClientSize = new Size(440, 430);
+        urlBox.Text = current ?? "";
+        userBox.Text = user ?? "";
+        passwordBox.Text = password ?? "";
+        var intro = new Label
+        {
+            Text = "Paste an RTSP or ONVIF address, then the camera username and password. Find cameras looks on this computer's network. Enter the username and password before you save. The watch page does not receive the password.",
+            AutoSize = true,
+            MaximumSize = new Size(400, 0),
+            Location = new Point(16, 12)
+        };
+        var urlLabel = new Label { Text = "RTSP or ONVIF address", AutoSize = true, Location = new Point(16, 78) };
+        urlBox.Location = new Point(16, 98);
+        var userLabel = new Label { Text = "Username", AutoSize = true, Location = new Point(16, 128) };
+        userBox.Location = new Point(16, 148);
+        var passwordLabel = new Label { Text = "Password", AutoSize = true, Location = new Point(16, 178) };
+        passwordBox.Location = new Point(16, 198);
+        find.Location = new Point(16, 234);
+        found.Location = new Point(16, 268);
+        status.Location = new Point(16, 364);
+        var save = new Button { Text = "Save", Location = new Point(150, 234), Width = 80 };
+        var clear = new Button { Text = "Clear", Location = new Point(236, 234), Width = 80 };
+        var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(322, 234), Width = 80 };
+        CancelButton = cancel;
+        found.SelectedIndexChanged += (_, _) =>
+        {
+            if (found.SelectedIndex >= 0 && found.SelectedIndex < addresses.Count)
+                urlBox.Text = addresses[found.SelectedIndex];
+        };
+        find.Click += (_, _) =>
+        {
+            find.Enabled = false;
+            status.Text = "Looking for cameras on this network. Enter the username and password before you save.";
+            found.Items.Clear();
+            addresses.Clear();
+            Task.Run(() =>
+            {
+                var cameras = OnvifDiscovery.Probe();
+                BeginInvoke(() =>
+                {
+                    find.Enabled = true;
+                    foreach (var camera in cameras)
+                    {
+                        found.Items.Add(camera.Host);
+                        addresses.Add(camera.Url);
+                    }
+                    status.Text = cameras.Count == 0
+                        ? "No camera answered. Paste the RTSP or ONVIF address instead."
+                        : "Pick a camera, enter its username and password, then save.";
+                });
+            });
+        };
+        save.Click += (_, _) =>
+        {
+            var address = urlBox.Text.Trim();
+            var userName = userBox.Text.Trim();
+            var secret = passwordBox.Text;
+            if (address.Length == 0)
+            {
+                status.Text = "Paste an RTSP or ONVIF address, or clear the camera.";
+                return;
+            }
+            var http = address.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || address.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+            var rtsp = address.StartsWith("rtsp://", StringComparison.OrdinalIgnoreCase) || address.StartsWith("rtsps://", StringComparison.OrdinalIgnoreCase);
+            if (!http && !rtsp)
+            {
+                status.Text = "Use an rtsp:// address or an ONVIF http:// address.";
+                return;
+            }
+            if (http && userName.Length == 0)
+            {
+                status.Text = "Enter the camera username and password, then save.";
+                return;
+            }
+            save.Enabled = false;
+            Task.Run(() =>
+            {
+                string? bare = null;
+                string resolvedUser = userName;
+                string resolvedPassword = secret;
+                if (http)
+                {
+                    bare = OnvifDiscovery.TryStream(address, userName, secret);
+                }
+                else
+                {
+                    var split = CameraAddress.Split(address);
+                    bare = CameraAddress.Bare(address);
+                    if (resolvedUser.Length == 0)
+                    {
+                        resolvedUser = split.User;
+                        resolvedPassword = split.Password;
+                    }
+                }
+                BeginInvoke(() =>
+                {
+                    save.Enabled = true;
+                    if (string.IsNullOrWhiteSpace(bare))
+                    {
+                        status.Text = "The camera did not accept the username and password.";
+                        return;
+                    }
+                    CameraUrl = bare;
+                    CameraUser = resolvedUser;
+                    CameraPassword = resolvedPassword;
+                    DialogResult = DialogResult.OK;
+                    Close();
+                });
+            });
+        };
+        clear.Click += (_, _) =>
+        {
+            CameraUrl = "";
+            CameraUser = "";
+            CameraPassword = "";
+            DialogResult = DialogResult.OK;
+            Close();
+        };
+        Controls.AddRange(new Control[] { intro, urlLabel, urlBox, userLabel, userBox, passwordLabel, passwordBox, find, save, clear, cancel, found, status });
     }
 }

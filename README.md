@@ -6,8 +6,8 @@ Clips upload to the owner's Cloudflare account. The website is in `viewer/`.
 
 ## Download
 
-- Android APK: https://github.com/bbscalton/till-recorder/releases/download/v1.5.4/till-recorder.apk
-- Windows: https://github.com/bbscalton/till-recorder/releases/download/v1.5.4/till-recorder-windows.zip — unzip and run `TillRecorder.exe`
+- Android APK: https://github.com/bbscalton/till-recorder/releases/download/v1.5.9/till-recorder.apk
+- Windows: https://github.com/bbscalton/till-recorder/releases/download/v1.5.9/till-recorder-windows.zip — unzip and run `TillRecorder.exe`
 
 ## Pair
 
@@ -23,4 +23,4 @@ Recording starts when the screen changes and stops about 20 seconds after the sc
 
 Open the site and sign in. The screen and the front camera or webcam sit side by side. The camera stays off until you turn it on from the watch page. Android live screen is about 3 fps, because of the phone screenshot limit. The Windows desktop is smooth, about 15–30+ fps. The camera is real video. Delete a clip or a whole day from the watch page.
 
-The recording includes everything visible on the register. Card numbers can appear in a clip if the point-of-sale app shows them.
+The recording includes everything visible on the register, and the text typed on it is saved with the clip. Card numbers can appear in a clip or in that typed text if the point-of-sale app shows or asks for them.

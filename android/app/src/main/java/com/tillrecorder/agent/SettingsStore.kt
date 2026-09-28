@@ -44,6 +44,39 @@ class SettingsStore(context: Context) {
             prefs.edit().putBoolean(KEY_WATCH, value).apply()
         }
 
+    var overheadUrl: String
+        get() = prefs.getString(KEY_OVERHEAD, "").orEmpty()
+        set(value) {
+            prefs.edit().putString(KEY_OVERHEAD, value.trim().take(300)).apply()
+        }
+
+    var overheadUser: String
+        get() = prefs.getString(KEY_OVERHEAD_USER, "").orEmpty()
+        set(value) {
+            prefs.edit().putString(KEY_OVERHEAD_USER, value.trim().take(80)).apply()
+        }
+
+    var overheadPassword: String
+        get() = prefs.getString(KEY_OVERHEAD_PASSWORD, "").orEmpty()
+        set(value) {
+            prefs.edit().putString(KEY_OVERHEAD_PASSWORD, value.take(80)).apply()
+        }
+
+    fun migrateOverheadCredentials() {
+        val split = CameraAddress.split(overheadUrl)
+        if (split.user.isEmpty()) return
+        if (overheadUser.isEmpty()) overheadUser = split.user
+        if (overheadPassword.isEmpty()) overheadPassword = split.password
+        overheadUrl = split.bare
+    }
+
+    fun pullUrl(): String {
+        migrateOverheadCredentials()
+        return CameraAddress.embed(overheadUrl, overheadUser, overheadPassword)
+    }
+
+    fun overheadLabel(): String = CameraAddress.label(overheadUrl)
+
     val hasPin: Boolean
         get() {
             val salt = PinLock.parseHex(prefs.getString(KEY_PIN_SALT, "").orEmpty())
@@ -109,6 +142,9 @@ class SettingsStore(context: Context) {
         private const val KEY_REMIND = "remind"
         private const val KEY_ERROR = "upload_error"
         private const val KEY_WATCH = "watch_enabled"
+        private const val KEY_OVERHEAD = "overhead_url"
+        private const val KEY_OVERHEAD_USER = "overhead_user"
+        private const val KEY_OVERHEAD_PASSWORD = "overhead_password"
         private const val KEY_PIN_SALT = "pin_salt"
         private const val KEY_PIN_HASH = "pin_hash"
         const val DEFAULT_URL = "https://till-recorder.neuereatec.workers.dev"

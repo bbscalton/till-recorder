@@ -117,13 +117,14 @@ sealed class H264Encoder : IDisposable
         sample.SampleTime = timestamp;
         sample.SampleDuration = duration;
         timestamp += duration;
-        if (forceKeyframe) sample.Set(SampleAttributeKeys.CleanPoint, 1u);
         try
         {
+            if (forceKeyframe) sample.Set(SampleAttributeKeys.CleanPoint, 1u);
             transform.ProcessInput(0, sample, 0);
         }
-        catch (SharpGenException)
+        catch (SharpGenException error)
         {
+            LastError = "input " + error.ResultCode.Code.ToString("X8");
             return null;
         }
         return Drain();
@@ -136,7 +137,7 @@ sealed class H264Encoder : IDisposable
         if (!providesSamples)
         {
             owned = MediaFactory.MFCreateSample();
-            var buffer = MediaFactory.MFCreateMemoryBuffer(Width * Height);
+            var buffer = MediaFactory.MFCreateMemoryBuffer(Math.Max(Width * Height, 1 << 20));
             owned.AddBuffer(buffer);
             buffer.Dispose();
             output.Sample = owned;

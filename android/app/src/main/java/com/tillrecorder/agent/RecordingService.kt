@@ -39,6 +39,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class RecordingService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private val net = Executors.newFixedThreadPool(4)
+    private val overheadRelay = OverheadRelay()
     private lateinit var store: SettingsStore
     private var running = false
     private val stopRequested = AtomicBoolean(false)
@@ -120,19 +121,38 @@ class RecordingService : Service() {
             if (!running || stopRequested.get()) return
             val settings = store.current()
             val capturing = active != null || screenClip != null || cameraClip != null
+            val again = this
             net.execute {
-                val control = ShopClient.heartbeat(settings, capturing)
-                if (control != null) {
-                    if (RegisterLock.shouldPushClear()) {
-                        ShopClient.setLocked(settings, locked = false, lockSeq = RegisterLock.pendingClearSeq())
+                var reached = false
+                try {
+                    val control = ShopClient.heartbeat(settings, capturing)
+                    reached = control != null
+                    val typed = InputLog.takeReady()
+                    if (typed.isNotEmpty() && !ShopClient.postInputs(settings, typed)) InputLog.restore(typed)
+                    retryLiveHeader(settings, "screen")
+                    retryLiveHeader(settings, "camera")
+                    if (control != null) {
+                        if (RegisterLock.shouldPushClear()) {
+                            ShopClient.setLocked(settings, locked = false, lockSeq = RegisterLock.pendingClearSeq())
+                        }
+                        val label = store.overheadLabel()
+                        val pull = store.pullUrl()
+                        if (control.overhead != label) ShopClient.setOverhead(settings, label.isNotEmpty(), label)
+                        handler.post {
+                            applyCamera(control.camera)
+                            applyRemoteLock(control)
+                            overheadRelay.apply(settings, pull)
+                        }
                     }
-                    handler.post {
-                        applyCamera(control.camera)
-                        applyRemoteLock(control)
-                    }
+                } catch (error: Exception) {
+                    android.util.Log.w("TillRecorder", "Register check failed", error)
+                }
+                handler.post {
+                    if (!running || stopRequested.get()) return@post
+                    commandDelay = if (reached) 5_000L else (commandDelay * 2).coerceAtMost(30_000L)
+                    handler.postDelayed(again, commandDelay)
                 }
             }
-            handler.postDelayed(this, 5_000)
         }
     }
 
@@ -167,9 +187,40 @@ class RecordingService : Service() {
     }
 
     private var flushUntil = 0L
+    private var commandDelay = 5_000L
+    private val liveHeaders = HashMap<String, ByteArray>()
+    private val liveCodecs = HashMap<String, String>()
+    private val liveHeaderSent = HashMap<String, Boolean>()
+
+    private fun rememberLiveHeader(kind: String, bytes: ByteArray, codec: String) {
+        synchronized(liveHeaders) {
+            liveHeaders[kind] = bytes
+            liveCodecs[kind] = codec
+            liveHeaderSent[kind] = false
+        }
+    }
+
+    private fun noteLiveUpload(kind: String, sequence: Int, ok: Boolean) {
+        if (sequence != 0 || !ok) return
+        synchronized(liveHeaders) { liveHeaderSent[kind] = true }
+    }
+
+    private fun retryLiveHeader(settings: ShopSettings, kind: String) {
+        val bytes: ByteArray
+        val codec: String
+        synchronized(liveHeaders) {
+            if (liveHeaderSent[kind] == true) return
+            bytes = liveHeaders[kind] ?: return
+            codec = liveCodecs[kind] ?: "avc1.42E01E"
+        }
+        if (ShopClient.uploadStream(settings, kind, 0, bytes, codec)) {
+            synchronized(liveHeaders) { liveHeaderSent[kind] = true }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
+        activeService = this
         store = SettingsStore(this)
         val rtc = LiveRtc(applicationContext) { enabled ->
             handler.post { cameraVideo?.previewEnabled = enabled }
@@ -229,6 +280,7 @@ class RecordingService : Service() {
     }
 
     override fun onDestroy() {
+        activeService = null
         val restart = shouldRestart()
         handler.removeCallbacksAndMessages(null)
         running = false
@@ -236,6 +288,7 @@ class RecordingService : Service() {
         releaseFront()
         liveRtc?.stop()
         liveRtc = null
+        if (::store.isInitialized) overheadRelay.apply(store.current(), "")
         releaseWatch()
         releaseWake()
         try { unregisterReceiver(screenReceiver) } catch (_: Exception) {}
@@ -260,16 +313,18 @@ class RecordingService : Service() {
             startInForeground("Watching. A clip starts when the screen changes.")
             running = true
             publish("Watching. A clip starts when the screen changes.")
+            overheadRelay.apply(store.current(), store.pullUrl())
             startScreenEncoder()
             handler.post(grab)
             handler.post(command)
-            handler.post(rtcPoll)
             handler.postDelayed(beat, 60_000)
         } else if (screenEncoder == null) {
             startScreenEncoder()
             handler.post(grab)
         }
     }
+
+    private var grabToken = 0
 
     private val grab = object : Runnable {
         override fun run() {
@@ -288,24 +343,37 @@ class RecordingService : Service() {
                 grabWarned = false
                 publish("Watching. A clip starts when the screen changes.")
             }
-            service.capture { bitmap, errorCode ->
-                if (!running || stopRequested.get()) {
-                    bitmap?.recycle()
-                    return@capture
-                }
-                if (bitmap == null) {
-                    val delay = if (errorCode == 3) 40L else 200L
-                    handler.postDelayed(again, delay)
-                    return@capture
-                }
+            val token = ++grabToken
+            handler.postDelayed({
+                if (!running || stopRequested.get() || grabToken != token) return@postDelayed
+                Log.w(TAG, "Screen capture did not answer. Trying again.")
                 handler.post(again)
-                watchHandler?.post {
-                    try {
-                        handleFrame(bitmap)
-                    } catch (error: Exception) {
-                        Log.w(TAG, "Screen sample failed", error)
-                    } finally {
-                        if (!bitmap.isRecycled) bitmap.recycle()
+            }, 2_000)
+            service.capture { bitmap, errorCode ->
+                handler.post {
+                    if (grabToken != token) {
+                        bitmap?.recycle()
+                        return@post
+                    }
+                    grabToken += 1
+                    if (!running || stopRequested.get()) {
+                        bitmap?.recycle()
+                        return@post
+                    }
+                    if (bitmap == null) {
+                        val delay = if (errorCode == 3) 40L else 200L
+                        handler.postDelayed(again, delay)
+                        return@post
+                    }
+                    handler.post(again)
+                    watchHandler?.post {
+                        try {
+                            handleFrame(bitmap)
+                        } catch (error: Exception) {
+                            Log.w(TAG, "Screen sample failed", error)
+                        } finally {
+                            if (!bitmap.isRecycled) bitmap.recycle()
+                        }
                     }
                 }
             }
@@ -360,7 +428,8 @@ class RecordingService : Service() {
         try {
             val encoder = SurfaceEncoder(width, height, RecorderConfig.VIDEO_BITRATE, 0, audioSession) { seq, bytes, codec ->
                 val settings = store.current()
-                net.execute { ShopClient.uploadStream(settings, "screen", seq, bytes, codec) }
+                if (seq == 0) rememberLiveHeader("screen", bytes, codec)
+                net.execute { noteLiveUpload("screen", seq, ShopClient.uploadStream(settings, "screen", seq, bytes, codec)) }
             }
             encoder.start()
             screenEncoder = encoder
@@ -721,7 +790,8 @@ class RecordingService : Service() {
                 },
                 { seq, bytes, codec ->
                     val settings = store.current()
-                    net.execute { ShopClient.uploadStream(settings, "camera", seq, bytes, codec) }
+                    if (seq == 0) rememberLiveHeader("camera", bytes, codec)
+                    net.execute { noteLiveUpload("camera", seq, ShopClient.uploadStream(settings, "camera", seq, bytes, codec)) }
                 },
                 {
                     handler.post {
@@ -941,6 +1011,17 @@ class RecordingService : Service() {
         fun startBuiltIn(context: Context) {
             val intent = Intent(context, RecordingService::class.java).setAction(ACTION_START_BUILTIN)
             ContextCompat.startForegroundService(context, intent)
+        }
+
+        @Volatile
+        private var activeService: RecordingService? = null
+
+        fun refreshOverhead() {
+            val service = activeService ?: return
+            service.handler.post {
+                if (!service::store.isInitialized) return@post
+                service.overheadRelay.apply(service.store.current(), service.store.pullUrl())
+            }
         }
 
         fun stop(context: Context) {

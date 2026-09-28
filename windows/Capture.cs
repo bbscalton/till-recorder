@@ -1,3 +1,5 @@
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using SharpGen.Runtime;
 using Vortice.Direct3D;
@@ -143,15 +145,12 @@ sealed class DesktopCapture : IDisposable
     {
         if (duplication == null || device == null || context == null) return null;
         IDXGIResource? resource = null;
+        var held = false;
         try
         {
             duplication.AcquireNextFrame((uint)timeoutMs, out var info, out resource);
-            if (info.LastPresentTime == 0 && info.AccumulatedFrames == 0)
-            {
-                duplication.ReleaseFrame();
-                resource.Dispose();
-                return null;
-            }
+            held = true;
+            if (info.AccumulatedFrames == 0 && info.LastPresentTime == 0) return null;
             using var texture = resource.QueryInterface<ID3D11Texture2D>();
             var desc = texture.Description;
             EnsureStaging((int)desc.Width, (int)desc.Height, desc.Format);
@@ -183,8 +182,44 @@ sealed class DesktopCapture : IDisposable
         }
         finally
         {
-            try { duplication?.ReleaseFrame(); } catch { }
+            if (held)
+            {
+                try { duplication?.ReleaseFrame(); } catch { }
+            }
             resource?.Dispose();
+        }
+    }
+
+    public BgraFrame? GrabStill()
+    {
+        try
+        {
+            var bounds = System.Windows.Forms.Screen.PrimaryScreen?.Bounds
+                ?? new Rectangle(0, 0, Math.Max(Width, 2), Math.Max(Height, 2));
+            if (bounds.Width < 2 || bounds.Height < 2) return null;
+            using var bitmap = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
+            using (var graphics = Graphics.FromImage(bitmap))
+                graphics.CopyFromScreen(bounds.Left, bounds.Top, 0, 0, bounds.Size, CopyPixelOperation.SourceCopy);
+            var data = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                var stride = bitmap.Width * 4;
+                var pixels = new byte[stride * bitmap.Height];
+                for (var row = 0; row < bitmap.Height; row++)
+                    Marshal.Copy(data.Scan0 + row * data.Stride, pixels, row * stride, stride);
+                Width = bitmap.Width;
+                Height = bitmap.Height;
+                return new BgraFrame { Pixels = pixels, Width = bitmap.Width, Height = bitmap.Height, Stride = stride };
+            }
+            finally
+            {
+                bitmap.UnlockBits(data);
+            }
+        }
+        catch (Exception error)
+        {
+            Detail = error.Message;
+            return null;
         }
     }
 

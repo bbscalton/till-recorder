@@ -9,66 +9,113 @@
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
-  <p class="site-home"><a href="index.html">Till Recorder</a></p>
   <section id="loginView" class="login">
     <form id="loginForm" class="card">
       <p class="eyebrow">Watch</p>
-      <h1>Open a register</h1>
-      <p class="lede">Sign in with your token. Pair a register with a code, then the Android tablet or Windows PC connects itself. Live video shows the screen. Turn the front camera or webcam on so both play together.</p>
+      <h1>Open the registers</h1>
+      <p class="lede">Sign in with your token. Pair a register with a code. The tablet or Windows PC connects itself.</p>
       <label for="token">Token</label>
       <input id="token" type="password" autocomplete="current-password" required>
       <p id="loginError" class="error" hidden></p>
       <button type="submit">Open recordings</button>
     </form>
   </section>
-  <section id="appView" class="shell" hidden>
-    <aside>
-      <p class="eyebrow">Registers</p>
-      <h1>Today</h1>
-      <button id="pairButton" type="button">Pair a register</button>
-      <div id="pairBox" class="pair-box" hidden>
-        <p id="pairCode" class="pair-code"></p>
-        <p id="pairStatus" class="hint">Enter this code in Till Recorder on the tablet or the Windows PC.</p>
+  <section id="appView" class="app" hidden>
+    <header class="topbar">
+      <div class="brand">
+        <a href="index.html">Till Recorder</a>
+        <p id="viewTitle">All registers</p>
       </div>
-      <div id="deviceList" class="devices"></div>
-      <label for="day">Day</label>
-      <input id="day" type="date">
-      <p id="daySize" class="hint">No clips yet.</p>
-    </aside>
-    <main>
-      <div class="pair">
-        <div>
-          <div class="live-head">
-            <h2 id="liveTitle">Register screen</h2>
-            <button id="lockToggle" type="button">Lock</button>
+      <form id="searchForm" class="search">
+        <label class="sr" for="searchInput">Search typed text</label>
+        <input id="searchInput" type="search" placeholder="Search a price, name, or phrase" autocomplete="off">
+        <select id="searchScope" aria-label="Where to search">
+          <option value="all">All registers</option>
+          <option value="one">This register</option>
+        </select>
+        <button type="submit">Search</button>
+      </form>
+      <div class="top-actions">
+        <label class="day-label" for="day">Day</label>
+        <input id="day" type="date">
+        <button id="pairButton" type="button">Pair a register</button>
+      </div>
+    </header>
+    <div id="pairBox" class="pair-box" hidden>
+      <p id="pairCode" class="pair-code"></p>
+      <p id="pairStatus" class="hint">Enter this code in Till Recorder on the tablet or the Windows PC.</p>
+    </div>
+    <section id="wallView">
+      <div id="deviceList" class="wall"></div>
+      <p id="daySize" class="hint wall-note">Pick a register to see the screen, camera, and what was typed together.</p>
+    </section>
+    <section id="detailView" hidden>
+      <div class="detail-bar">
+        <button id="backWall" type="button">All registers</button>
+        <h1 id="detailName">Register</h1>
+        <p id="liveState" class="status-line">Live</p>
+        <form id="staffForm" class="staff">
+          <label for="cashierInput">Cashier</label>
+          <input id="cashierInput" type="text" maxlength="60" placeholder="Who is on this till" autocomplete="off">
+          <button type="submit">Save</button>
+        </form>
+        <button id="lockToggle" type="button">Lock</button>
+      </div>
+      <p id="lockHint" class="hint">Locks this register until the owner PIN is entered on the tablet.</p>
+      <div class="moments">
+        <article class="pane">
+          <header><h2>Screen</h2></header>
+          <div class="frame">
+            <video id="live" muted autoplay playsinline></video>
+            <video id="player" controls playsinline hidden></video>
           </div>
-          <p id="lockHint" class="hint">Locks this register until the owner PIN is entered on the tablet.</p>
-          <p id="liveState" class="hint">Idle</p>
-          <video id="live" muted autoplay playsinline></video>
-        </div>
-        <div>
-          <div class="live-head">
+        </article>
+        <article class="pane">
+          <header>
             <h2>Camera</h2>
             <button id="cameraToggle" type="button">Turn on</button>
+          </header>
+          <div class="frame">
+            <video id="camera" muted autoplay playsinline hidden></video>
+            <video id="playCamera" controls playsinline hidden></video>
+            <p id="cameraHint" class="camera-off">Off. Turn it on to see the person at the register.</p>
           </div>
-          <video id="camera" muted autoplay playsinline hidden></video>
-          <p id="cameraHint" class="camera-off">Off. Turn it on to see the person at the register beside the screen.</p>
-        </div>
+        </article>
+        <article class="pane">
+          <header><h2>Overhead</h2></header>
+          <div class="frame">
+            <video id="overhead" muted autoplay playsinline hidden></video>
+            <video id="playOverhead" controls playsinline hidden></video>
+            <p id="overheadHint" class="camera-off">No overhead camera has been added on this register.</p>
+          </div>
+        </article>
       </div>
-      <div class="stage">
-        <video id="player" controls playsinline></video>
-      </div>
+      <p id="quietNote" class="quiet" hidden>Picture is quiet. Showing the last frame.</p>
       <div class="transport">
+        <button id="liveNow" type="button">Back to live</button>
         <button id="playDay" type="button">Play day</button>
         <button id="backThirty" type="button">−30 sec</button>
         <button id="forwardThirty" type="button">+30 sec</button>
+        <button id="downloadClip" type="button" hidden>Download this clip</button>
         <button id="deleteClip" type="button" hidden>Delete this clip</button>
         <button id="deleteDay" type="button">Delete this day</button>
         <p id="clock" class="clock">—</p>
       </div>
       <div id="timeline" class="timeline"><div id="track" class="track"></div><div id="playhead" class="playhead" hidden></div></div>
+      <div class="lower">
+        <section class="transcript">
+          <h2>What was typed</h2>
+          <p class="hint">The same moment as the pictures. A card number shows here if the till asked for one.</p>
+          <ol id="searchResults" class="results" hidden></ol>
+          <ol id="inputList"></ol>
+        </section>
+        <section class="overhead-note">
+          <h2>Overhead camera</h2>
+          <p id="overheadNote" class="hint">Add the camera on the register. This page only shows the picture that register sends.</p>
+        </section>
+      </div>
       <p id="status" class="hint"></p>
-    </main>
+    </section>
   </section>
   <script src="config.js"></script>
   <script src="app.js"></script>

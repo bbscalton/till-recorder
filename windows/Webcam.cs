@@ -170,8 +170,22 @@ sealed class Microphone : IDisposable
         }
     }
 
+    volatile bool drain;
+
+    public void StartDrain()
+    {
+        drain = true;
+        var thread = new Thread(() =>
+        {
+            while (drain) TryRead();
+        })
+        { IsBackground = true, Name = "TillMic" };
+        thread.Start();
+    }
+
     public void Dispose()
     {
+        drain = false;
         reader?.Dispose();
         reader = null;
         try { source?.Shutdown(); } catch { }
@@ -179,4 +193,63 @@ sealed class Microphone : IDisposable
         source = null;
         Opened = false;
     }
+}
+
+sealed class WebcamPump : IDisposable
+{
+    readonly object gate = new();
+    WebcamCapture? camera;
+    Nv12Frame? latest;
+    Thread? thread;
+    volatile bool run;
+
+    public bool Running => run;
+    public bool Opened { get; private set; }
+    public string Name { get; private set; } = "";
+    public int Width { get; private set; }
+    public int Height { get; private set; }
+
+    public void Start()
+    {
+        Stop();
+        camera = WebcamCapture.TryOpen();
+        Opened = camera != null;
+        Name = camera?.Name ?? "";
+        Width = camera?.Width ?? 0;
+        Height = camera?.Height ?? 0;
+        if (camera == null) return;
+        run = true;
+        var source = camera;
+        thread = new Thread(() =>
+        {
+            while (run)
+            {
+                var frame = source.TryRead();
+                if (frame != null)
+                {
+                    lock (gate) latest = frame;
+                }
+            }
+        })
+        { IsBackground = true, Name = "TillWebcam" };
+        thread.Start();
+    }
+
+    public Nv12Frame? Latest()
+    {
+        lock (gate) return latest;
+    }
+
+    public void Stop()
+    {
+        run = false;
+        try { thread?.Join(800); } catch { }
+        thread = null;
+        camera?.Dispose();
+        camera = null;
+        Opened = false;
+        lock (gate) latest = null;
+    }
+
+    public void Dispose() => Stop();
 }
