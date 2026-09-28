@@ -30,6 +30,14 @@ export class LiveRelay {
   }
 
   async fetch(request) {
+    if (!this.loaded) {
+      this.loaded = true;
+      const saved = await this.ctx.storage.get("init");
+      if (saved && saved.init) {
+        this.codec = saved.codec || this.codec;
+        this.init = saved.init;
+      }
+    }
     if (request.headers.get("Upgrade") === "websocket") {
       const pair = new WebSocketPair();
       const client = pair[0];
@@ -55,6 +63,7 @@ export class LiveRelay {
     if (seq === 0) {
       this.init = stored;
       this.recent = [];
+      this.ctx.waitUntil(this.ctx.storage.put("init", { codec: this.codec, init: stored }).catch(() => {}));
     } else {
       this.recent.push({ meta, bytes: stored });
       if (this.recent.length > 90) this.recent.shift();
@@ -417,6 +426,15 @@ async function readLive(env, deviceId) {
 }
 
 async function saveSegment(request, env) {
+  try {
+    return await storeSegment(request, env);
+  } catch (error) {
+    const message = String(error && error.stack ? error.stack : error).split("\n")[0].slice(0, 180);
+    return json({ error: message }, 500);
+  }
+}
+
+async function storeSegment(request, env) {
   const form = await request.formData();
   const deviceId = String(form.get("device_id") || "");
   const deviceName = cleanName(String(form.get("device_name") || ""));

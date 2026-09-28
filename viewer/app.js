@@ -17,7 +17,29 @@ const clock = document.getElementById("clock");
 const track = document.getElementById("track");
 const playhead = document.getElementById("playhead");
 const liveState = document.getElementById("liveState");
-let token = sessionStorage.getItem("till-token") || "";
+function storedToken() {
+  try {
+    return localStorage.getItem("till-token") || sessionStorage.getItem("till-token") || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function keepToken(value) {
+  token = value || "";
+  try {
+    if (token) {
+      localStorage.setItem("till-token", token);
+      sessionStorage.setItem("till-token", token);
+    } else {
+      localStorage.removeItem("till-token");
+      sessionStorage.removeItem("till-token");
+    }
+  } catch (error) {}
+}
+
+let token = storedToken();
+if (token) keepToken(token);
 let devices = [];
 let selectedId = "";
 let segments = [];
@@ -42,8 +64,7 @@ function formatClock(ms) {
     headers: { Authorization: `Bearer ${token}`, ...(options && options.headers) },
   });
   if (response.status === 401) {
-    token = "";
-    sessionStorage.removeItem("till-token");
+    keepToken("");
     showLogin();
     throw new Error("auth");
   }
@@ -70,7 +91,7 @@ document.getElementById("loginForm").addEventListener("submit", async (event) =>
     document.getElementById("loginError").textContent = "That token does not match the recorder.";
     return;
   }
-  sessionStorage.setItem("till-token", token);
+  keepToken(token);
   document.getElementById("token").value = "";
   showApp();
   dayInput.value = todayIso();
@@ -635,35 +656,102 @@ class PushFeed {
     this.badAppends = 0;
     this.fpsLabel = "";
     this.watching = false;
+    this.openedAt = 0;
+    this.lastMessageAt = 0;
+    this.reviveTimer = 0;
+    this.healTimer = setInterval(() => this.heal(), 3000);
+  }
+
+  healthy(id) {
+    if (this.id !== id) return false;
+    if (this.connecting || this.reviveTimer) return true;
+    if (!this.socket || this.socket.readyState > 1) return false;
+    const since = this.lastMessageAt || this.openedAt || 0;
+    return Boolean(since) && Date.now() - since < 8000;
   }
 
   start(id) {
-    if (this.id === id && this.socket && this.socket.readyState <= 1) return;
-    this.stop();
-    this.id = id;
-    this.generation = (this.generation || 0) + 1;
-    this.open(id, this.generation);
+    if (this.healthy(id)) return;
+    this.revive(id);
+  }
+
+  revive(id) {
+    const nextId = id || this.id;
+    if (!nextId || this.reviveTimer) return;
+    const wait = this.openedAt && Date.now() - this.openedAt < 1500 ? 1500 - (Date.now() - this.openedAt) : 0;
+    this.reviveTimer = setTimeout(() => {
+      this.reviveTimer = 0;
+      if (!nextId) return;
+      this.id = nextId;
+      this.generation = (this.generation || 0) + 1;
+      this.closeSocket();
+      try { this.video.srcObject = null; } catch (error) {}
+      this.queue = [];
+      this.meta = null;
+      this.hold = new Map();
+      this.nextSeq = null;
+      this.gapSince = 0;
+      this.open(nextId, this.generation);
+    }, wait);
+  }
+
+  heal() {
+    if (!this.id || this.healthy(this.id)) return;
+    this.revive(this.id);
+  }
+
+  closeSocket() {
+    const socket = this.socket;
+    this.socket = null;
+    if (!socket) return;
+    socket.onclose = null;
+    socket.onerror = null;
+    socket.onmessage = null;
+    try { socket.close(); } catch (error) {}
   }
 
   async open(id, generation) {
+    this.connecting = true;
+    this.openedAt = Date.now();
+    this.lastMessageAt = 0;
+    try {
     try {
       const head = await api(`/api/stream/${encodeURIComponent(id)}/${this.kind}/head`);
       const initRes = await fetch(`${worker}/api/stream/${encodeURIComponent(id)}/${this.kind}/init?access=${encodeURIComponent(token)}`, { cache: "no-store" });
-      if (this.generation !== generation) return;
+      if (this.generation !== generation || this.id !== id) return;
       if (head && initRes.ok) await this.attach(head.codec || "avc1.42E01E", await initRes.arrayBuffer());
     } catch (error) {
-      if (this.generation === generation) this.note("Waiting for live video from the register.");
+      if (this.generation === generation && this.id === id) this.note("Waiting for live video from the register.");
     }
-    if (this.generation !== generation) return;
+    if (this.generation !== generation || this.id !== id) return;
     const url = `${worker.replace(/^http/, "ws")}/api/live-ws?device_id=${encodeURIComponent(id)}&kind=${this.kind}&access=${encodeURIComponent(token)}`;
     const socket = new WebSocket(url);
+    if (this.generation !== generation || this.id !== id) {
+      try { socket.close(); } catch (error) {}
+      return;
+    }
     this.socket = socket;
+    this.openedAt = Date.now();
     socket.binaryType = "arraybuffer";
     socket.onmessage = (event) => {
       if (socket !== this.socket) return;
+      this.lastMessageAt = Date.now();
       this.queue.push(event.data);
       this.pump();
     };
+    socket.onerror = () => {
+      if (socket !== this.socket) return;
+      try { socket.close(); } catch (error) {}
+    };
+    socket.onclose = () => {
+      if (socket !== this.socket) return;
+      this.socket = null;
+      this.note("Live video is reconnecting.");
+      this.revive(id);
+    };
+    } finally {
+      if (this.generation === generation) this.connecting = false;
+    }
   }
 
   stop() {
@@ -680,10 +768,11 @@ class PushFeed {
       clearTimeout(this.gapTimer);
       this.gapTimer = 0;
     }
-    if (this.socket) {
-      try { this.socket.close(); } catch (error) {}
-      this.socket = null;
+    if (this.reviveTimer) {
+      clearTimeout(this.reviveTimer);
+      this.reviveTimer = 0;
     }
+    this.closeSocket();
     this.resetMedia();
   }
 
@@ -693,10 +782,7 @@ class PushFeed {
       clearTimeout(this.gapTimer);
       this.gapTimer = 0;
     }
-    if (this.socket) {
-      try { this.socket.close(); } catch (error) {}
-      this.socket = null;
-    }
+    this.closeSocket();
     this.queue = [];
     this.media = null;
     this.source = null;
@@ -705,14 +791,13 @@ class PushFeed {
   resetMedia() {
     this.codec = "";
     this.source = null;
+    try { this.video.srcObject = null; } catch (error) {}
     if (this.media) {
       try { URL.revokeObjectURL(this.video.src); } catch (error) {}
       this.media = null;
     }
-    if (!this.video.srcObject) {
-      this.video.removeAttribute("src");
-      this.video.load();
-    }
+    this.video.removeAttribute("src");
+    this.video.load();
   }
 
   async pump() {
@@ -1012,7 +1097,11 @@ class RtcFeed {
       if (this.pc.iceConnectionState === "connected" || this.pc.iceConnectionState === "completed") {
         this.maybeAdopt();
       }
-      if (this.pc.iceConnectionState === "failed") this.useFallback("Live link did not connect. Showing the uploaded video.");
+      if (this.pc.iceConnectionState === "failed" || this.pc.iceConnectionState === "disconnected" || this.pc.iceConnectionState === "closed") {
+        if (this.video.srcObject) this.video.srcObject = null;
+        this.connected = false;
+        this.useFallback("Live video is reconnecting.");
+      }
     };
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
@@ -1073,18 +1162,7 @@ class RtcFeed {
     if (decoded < 3) return;
     clearInterval(this.confirmTimer);
     this.confirmTimer = 0;
-    const stream = this.pendingStream;
-    const push = this.kind === "camera" ? cameraPush : screenPush;
-    if (push) push.yieldToRtc();
-    this.video.srcObject = stream;
-    this.video.muted = true;
     this.connected = true;
-    if (this.fallback) {
-      this.fallback.stop();
-      this.fallback = null;
-      this.video.srcObject = stream;
-    }
-    this.video.play().catch(() => {});
     this.note(this.fpsLabel || "Live video connected.");
     this.measure().catch(() => {});
   }
@@ -1133,12 +1211,11 @@ class RtcFeed {
   }
 
   useFallback(text) {
-    if (this.connected || this.fallback || !this.id) return;
+    if (!this.id) return;
     const push = this.kind === "camera" ? cameraPush : screenPush;
-    if (push && push.socket && push.socket.readyState <= 1) return;
+    if (!push || !push.id || push.healthy(push.id)) return;
     this.note(text);
-    this.fallback = new LiveFeed(this.video, this.kind, this.announce);
-    this.fallback.start(this.id);
+    push.revive();
   }
 
   note(text) {
@@ -1179,3 +1256,14 @@ if (token) {
 setInterval(() => {
   if (!appView.hidden) refresh().catch(() => {});
 }, 4000);
+
+function resumeLive(force) {
+  if (appView.hidden) return;
+  if (screenPush && screenPush.id && (force || !screenPush.healthy(screenPush.id))) screenPush.revive();
+  if (cameraPush && cameraPush.id && (force || !cameraPush.healthy(cameraPush.id))) cameraPush.revive();
+}
+
+window.addEventListener("online", () => resumeLive(true));
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) resumeLive(false);
+});
