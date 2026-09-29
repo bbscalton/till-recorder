@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Sign in — Till Recorder</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,520;9..144,640&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="desk.css">
+</head>
+<body>
+  <header class="top">
+    <a class="mark" href="index.html">Till<span class="dot" aria-hidden="true"></span></a>
+    <nav>
+      <a href="index.html">Home</a>
+      <a href="/account">Account</a>
+      <a href="watch.html">Owner watch</a>
+    </nav>
+  </header>
+  <main>
+    <p class="lede">Register or sign in</p>
+    <h1>Google, then approval.</h1>
+    <p class="lede">A new Google account is pending. You cannot pair a till or watch video until management approves the account and a plan.</p>
+    <section class="panel stack" style="margin-top: 22px; max-width: 560px;">
+      <p id="googleNote" class="note">Checking Google sign-in…</p>
+      <div class="row">
+        <a id="googleButton" class="button" href="/auth/google" hidden>Continue with Google</a>
+      </div>
+      <p class="note">The owner still opens registers with the existing token on the watch page. That path is unchanged.</p>
+      <a class="button quiet" href="watch.html">Owner token sign-in</a>
+    </section>
+  </main>
+  <script>
+    const note = document.getElementById("googleNote");
+    const button = document.getElementById("googleButton");
+    const params = new URLSearchParams(location.search);
+    const flag = params.get("google");
+    fetch("/api/auth/config", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((config) => {
+        if (config.google) {
+          note.textContent = flag === "failed"
+            ? "Google did not finish sign-in. Try again."
+            : "Use the Google account for this store. Management still has to approve a new registration.";
+          button.hidden = false;
+          return;
+        }
+        button.hidden = true;
+        note.textContent = "Google sign-in is waiting on setup. The owner sets GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET on the worker, and adds this redirect URI in Google Cloud: https://till-recorder.neuereatec.workers.dev/auth/google/callback. The rest of the site is ready.";
+      })
+      .catch(() => {
+        button.hidden = true;
+        note.textContent = "Sign-in could not be checked. Google setup may still be waiting. The redirect URI is https://till-recorder.neuereatec.workers.dev/auth/google/callback.";
+      });
+  </script>
+</body>
+</html>

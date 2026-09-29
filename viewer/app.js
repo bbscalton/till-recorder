@@ -4,8 +4,12 @@ const appView = document.getElementById("appView");
 const live = document.getElementById("live");
 const camera = document.getElementById("camera");
 const cameraToggle = document.getElementById("cameraToggle");
+const recordToggle = document.getElementById("recordToggle");
+const recordState = document.getElementById("recordState");
 const cameraHint = document.getElementById("cameraHint");
 const lockToggle = document.getElementById("lockToggle");
+const launcherToggle = document.getElementById("launcherToggle");
+const launcherHint = document.getElementById("launcherHint");
 const lockHint = document.getElementById("lockHint");
 const deleteClip = document.getElementById("deleteClip");
 const deleteDay = document.getElementById("deleteDay");
@@ -30,7 +34,10 @@ const cashierInput = document.getElementById("cashierInput");
 const overheadNote = document.getElementById("overheadNote");
 const quietNote = document.getElementById("quietNote");
 const viewTitle = document.getElementById("viewTitle");
+const customerWatch = new URLSearchParams(location.search).get("customer") === "1";
+
 function storedToken() {
+  if (customerWatch) return "";
   try {
     return localStorage.getItem("till-token") || sessionStorage.getItem("till-token") || "";
   } catch (error) {
@@ -39,7 +46,8 @@ function storedToken() {
 }
 
 function keepToken(value) {
-  token = value || "";
+  token = customerWatch ? "" : (value || "");
+  if (customerWatch) return;
   try {
     if (token) {
       localStorage.setItem("till-token", token);
@@ -80,10 +88,13 @@ function formatClock(ms) {
   const response = await fetch(`${worker}${path}`, {
     cache: "no-store",
     ...options,
-    headers: { Authorization: `Bearer ${token}`, ...(options && options.headers) },
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options && options.headers),
+    },
   });
   if (response.status === 401) {
-    keepToken("");
+    if (!customerWatch) keepToken("");
     showLogin();
     throw new Error("auth");
   }
@@ -103,6 +114,7 @@ function showApp() {
 
 document.getElementById("loginForm").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (customerWatch) return;
   token = document.getElementById("token").value.trim();
   const response = await fetch(`${worker}/api/check-token`, { headers: { Authorization: `Bearer ${token}` } });
   if (!response.ok) {
@@ -116,6 +128,27 @@ document.getElementById("loginForm").addEventListener("submit", async (event) =>
   dayInput.value = todayIso();
   await refresh();
 });
+
+if (recordToggle) {
+  recordToggle.addEventListener("click", async () => {
+    if (!selectedId || recordToggle.disabled) return;
+    const current = devices.find((device) => device.id === selectedId);
+    const enabled = current ? current.record === false : false;
+    recordToggle.disabled = true;
+    try {
+      await api("/api/recording", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_id: selectedId, enabled }),
+      });
+      await refresh();
+    } catch (error) {
+      if (error.message !== "auth" && recordState) recordState.textContent = "Could not change recording. Try again.";
+    } finally {
+      recordToggle.disabled = !selectedId;
+    }
+  });
+}
 
 cameraToggle.addEventListener("click", async () => {
   if (!selectedId || cameraToggle.disabled) return;
@@ -135,6 +168,27 @@ cameraToggle.addEventListener("click", async () => {
     cameraToggle.disabled = !selectedId;
   }
 });
+
+if (launcherToggle) {
+  launcherToggle.addEventListener("click", async () => {
+    if (!selectedId || launcherToggle.disabled) return;
+    const current = devices.find((device) => device.id === selectedId);
+    const showing = Number(current && current.launcherUntil || 0) > Date.now();
+    launcherToggle.disabled = true;
+    try {
+      await api("/api/launcher", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_id: selectedId, show: !showing }),
+      });
+      await refresh();
+    } catch (error) {
+      if (launcherHint) launcherHint.textContent = error.message === "auth" ? "Sign in again." : "Could not update the till icon.";
+    } finally {
+      launcherToggle.disabled = !selectedId;
+    }
+  });
+}
 
 lockToggle.addEventListener("click", async () => {
   if (!selectedId || lockToggle.disabled) return;
@@ -332,6 +386,26 @@ function paintDetail(current) {
   lockHint.textContent = locked
     ? "Locked. Press Unlock here, or enter the owner PIN on the tablet."
     : "Locks this register until the owner PIN is entered on the tablet.";
+  if (launcherToggle) {
+    const showing = Number(current && current.launcherUntil || 0) > Date.now();
+    launcherToggle.textContent = showing ? "Hide app on till" : "Show app on till";
+    launcherToggle.disabled = !selectedId;
+    if (launcherHint) {
+      launcherHint.textContent = showing
+        ? "The icon is visible on that register until the time runs out, or until you hide it. Hiding the icon does not stop uninstall from Settings."
+        : "Shows the Till Recorder icon on this register for 15 minutes. Hiding the icon does not stop uninstall from Settings.";
+    }
+  }
+  const recording = Boolean(current && current.record !== false && current.recording);
+  const recordLabel = recording ? "Recording" : "Not recording";
+  if (recordState && recordState.textContent !== recordLabel) recordState.textContent = recordLabel;
+  if (recordState) recordState.classList.toggle("off", !recording);
+  if (recordToggle) {
+    const armed = !current || current.record !== false;
+    recordToggle.textContent = armed ? "Stop recording" : "Start recording";
+    recordToggle.classList.toggle("on", armed);
+    recordToggle.disabled = !selectedId;
+  }
   const cameraOn = Boolean(current && current.camera);
   cameraToggle.textContent = cameraOn ? "Turn off" : "Turn on";
   cameraToggle.classList.toggle("on", cameraOn);
@@ -356,7 +430,7 @@ function paintDetail(current) {
     if (overheadNote.textContent !== nextNote) overheadNote.textContent = nextNote;
   }
   if (document.activeElement !== cashierInput) cashierInput.value = current && current.cashier ? current.cashier : "";
-  if (selectedId && !showingPlayback) syncLive(selectedId, cameraOn, Boolean(current && current.overhead));
+  if (selectedId && !showingPlayback) syncLive(selectedId, cameraOn, Boolean(current && current.overhead), current ? current.record !== false : true);
   viewTitle.textContent = current ? current.name : "All registers";
   document.getElementById("detailName").textContent = current ? current.name || "Register" : "Register";
 }
@@ -403,7 +477,9 @@ function renderDevices() {
       const chip = document.createElement("span");
       chip.className = "chip";
       const who = document.createElement("small");
-      meta.append(name, chip, who);
+      const recordLabel = document.createElement("span");
+      recordLabel.className = "record-state";
+      meta.append(name, chip, who, recordLabel);
       button.append(video, meta);
       button.addEventListener("click", () => openTill(device.id));
       deviceList.appendChild(button);
@@ -422,8 +498,22 @@ function renderDevices() {
       ? `Last seen ${formatSeen(device)}`
       : (device.cashier ? device.cashier : "No cashier set");
     if (who.textContent !== whoText) who.textContent = whoText;
+    let recordLabel = button.querySelector(".record-state");
+    if (!recordLabel) {
+      recordLabel = document.createElement("span");
+      recordLabel.className = "record-state";
+      button.querySelector(".tile-meta").append(recordLabel);
+    }
+    const recording = device.record !== false && Boolean(device.recording);
+    const recordText = recording ? "Recording" : "Not recording";
+    if (recordLabel.textContent !== recordText) recordLabel.textContent = recordText;
+    recordLabel.classList.toggle("off", !recording);
     const feed = wallFeeds.get(device.id);
-    if (feed && online && !feed.healthy(device.id)) feed.start(device.id);
+    if (feed && device.record === false) feed.holdStill();
+    else if (feed && online) {
+      feed.releaseStill();
+      if (!feed.healthy(device.id)) feed.start(device.id);
+    }
   }
   for (const button of [...deviceList.querySelectorAll(".tile")]) {
     if (!seen.has(button.dataset.id)) {
@@ -1012,6 +1102,20 @@ class PushFeed {
     this.healTimer = setInterval(() => this.heal(), 3000);
   }
 
+  holdStill() {
+    if (this.still) return;
+    this.still = true;
+    if (this.reviveTimer) {
+      clearTimeout(this.reviveTimer);
+      this.reviveTimer = 0;
+    }
+    this.closeSocket();
+  }
+
+  releaseStill() {
+    this.still = false;
+  }
+
   healthy(id) {
     if (this.id !== id) return false;
     if (this.connecting || this.reviveTimer) return true;
@@ -1024,6 +1128,7 @@ class PushFeed {
   }
 
   revive(id) {
+    if (this.still) return;
     const nextId = id || this.id;
     if (!nextId) return;
     if (this.socket && this.socket.readyState <= 1 && this.id === nextId) return;
@@ -1051,6 +1156,7 @@ class PushFeed {
   }
 
   heal() {
+    if (this.still) return;
     const stale = Boolean(this.source && this.lastMessageAt && Date.now() - this.lastMessageAt > 8000);
     if (stale) this.video.dataset.quiet = "1";
     else if (this.lastMessageAt) delete this.video.dataset.quiet;
@@ -1121,6 +1227,7 @@ class PushFeed {
     socket.onclose = () => {
       if (socket !== this.socket) return;
       this.socket = null;
+      if (this.still) return;
       this.note("Live video is reconnecting.");
       this.revive(id);
     };
@@ -1618,7 +1725,16 @@ screenPush = new PushFeed(live, "screen", true);
 cameraPush = new PushFeed(camera, "camera", false);
 const overheadPush = new PushFeed(overhead, "overhead", false);
 
-function syncLive(id, cameraOnNow, overheadOn) {
+function syncLive(id, cameraOnNow, overheadOn, recordOn) {
+  if (recordOn === false) {
+    screenPush.holdStill();
+    cameraPush.holdStill();
+    overheadPush.holdStill();
+    return;
+  }
+  screenPush.releaseStill();
+  cameraPush.releaseStill();
+  overheadPush.releaseStill();
   if (screenFeed.id) screenFeed.stop();
   if (cameraFeed.id) cameraFeed.stop();
   if (screenPush.id !== id) screenPush.start(id);
@@ -1641,7 +1757,51 @@ function syncLive(id, cameraOnNow, overheadOn) {
   }
 }
 
-if (token) {
+function showCustomerGate(message) {
+  const title = document.querySelector("#loginForm h1");
+  const lede = document.querySelector("#loginForm .lede");
+  if (title) title.textContent = "Your registers";
+  if (lede) lede.textContent = message;
+  const label = document.querySelector("#loginForm label");
+  const field = document.getElementById("token");
+  const button = document.querySelector("#loginForm button");
+  if (label) label.hidden = true;
+  if (field) field.hidden = true;
+  if (button) button.hidden = true;
+  if (!document.getElementById("customerAccountLink")) {
+    const link = document.createElement("a");
+    link.id = "customerAccountLink";
+    link.href = "/account";
+    link.textContent = "Open your account";
+    document.getElementById("loginForm").appendChild(link);
+  }
+  showLogin();
+}
+
+if (customerWatch) {
+  showCustomerGate("Checking the account…");
+  fetch(`${worker}/api/account`, { cache: "no-store" }).then(async (response) => {
+    if (!response.ok) {
+      showCustomerGate("Sign in with Google on the account page before opening your registers.");
+      return;
+    }
+    const account = await response.json();
+    if (!account.canWatch) {
+      const waiting = account.status === "pending"
+        ? "This account is waiting for management to approve it. Video stays off until then."
+        : account.status === "denied"
+          ? "Management denied this account."
+          : "Video stays hidden until management approves a plan. The register stays paired.";
+      showCustomerGate(waiting);
+      return;
+    }
+    showApp();
+    dayInput.value = todayIso();
+    refresh().catch(() => {});
+  }).catch(() => {
+    showCustomerGate("The account page could not be reached.");
+  });
+} else if (token) {
   showApp();
   dayInput.value = todayIso();
   refresh().catch((error) => {
@@ -1660,7 +1820,7 @@ function deviceOnline(device) {
 }
 
 function resumeLive() {
-  if (!storedToken()) return;
+  if (!customerWatch && !storedToken()) return;
   if (appView.hidden) showApp();
   refresh().catch((error) => {
     if (error && error.message === "auth") return;

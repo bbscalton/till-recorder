@@ -57,7 +57,9 @@ input, select { width: 100%; padding: 8px 10px; background: #0e1014; border: 1px
 .staff { display: flex; gap: 8px; align-items: center; margin-left: auto; }
 .staff label { margin: 0; }
 .staff input { width: 180px; }
-#lockToggle.on, #cameraToggle.on { background: var(--danger); border-color: var(--danger); color: white; }
+#lockToggle.on, #cameraToggle.on, #recordToggle.on { background: var(--danger); border-color: var(--danger); color: white; }
+.record-state { display: block; margin-top: 4px; font-size: 13px; font-weight: 650; }
+.record-state.off { color: var(--offline); }
 .moments { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 12px; padding: 12px 18px; }
 .pane header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
 .frame { position: relative; background: #000; border-radius: 8px; min-height: 180px; }

@@ -1,3 +1,20 @@
+import {
+  adminDecidePlan,
+  adminDecideUser,
+  adminOverview,
+  canWatch,
+  cleanupRetention,
+  finishGoogle,
+  googleReady,
+  logout,
+  readAccount,
+  recordingAllowed,
+  requestPlan,
+  sessionUser,
+  startGoogle,
+  userOwnsActiveDevice,
+} from "./accounts.js";
+
 const DEVICE_ID = /^[A-Za-z0-9_-]{8,64}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const SEGMENT_ID = /^[a-f0-9]{32}$/;
@@ -13,10 +30,16 @@ export default {
   async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") return new Response(null, { headers: cors });
     const url = new URL(request.url);
+    if (url.pathname === "/auth/google") return startGoogle(request, env);
+    if (url.pathname === "/auth/google/callback") return finishGoogle(request, env);
+    if (url.pathname === "/auth/logout") return logout();
     if (url.pathname.startsWith("/api/")) {
       return handleApi(request, env, url, ctx);
     }
     return env.ASSETS.fetch(request);
+  },
+  async scheduled(_event, env, ctx) {
+    ctx.waitUntil(cleanupRetention(env));
   },
 };
 
@@ -84,18 +107,84 @@ export class LiveRelay {
 
 const PAIR_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 
+function tillRoute(request, url) {
+  if (request.method === "POST" && (
+    url.pathname === "/api/heartbeat"
+    || url.pathname === "/api/live"
+    || url.pathname === "/api/stream"
+    || url.pathname === "/api/segments"
+    || url.pathname === "/api/camera-frame"
+    || url.pathname === "/api/inputs"
+    || url.pathname === "/api/overhead-found"
+  )) return true;
+  return false;
+}
+
+async function identify(request, env) {
+  if (authorized(request, env)) return { role: "admin" };
+  const user = await sessionUser(request, env);
+  return user ? { role: "user", user } : null;
+}
+
+function deviceIdFromPath(url) {
+  const parts = url.pathname.split("/").filter(Boolean);
+  if (parts[0] !== "api" || parts.length < 3) return "";
+  if (parts[1] === "stream" || parts[1] === "live" || parts[1] === "camera") {
+    return decodeURIComponent(parts[2] || "");
+  }
+  return "";
+}
+
+async function enforceOwnership(request, env, url, who) {
+  if (!who || who.role === "admin") return null;
+  if (url.pathname === "/api/devices" || url.pathname === "/api/pair-codes") return null;
+  if (url.pathname.startsWith("/api/pair-codes/")) return null;
+  if (url.pathname.startsWith("/api/media/")) return null;
+  if (url.pathname === "/api/search" && !url.searchParams.get("device_id")) return null;
+  let deviceId = url.searchParams.get("device_id") || deviceIdFromPath(url);
+  if (!deviceId && request.method === "POST") {
+    const body = await request.clone().json().catch(() => ({}));
+    deviceId = body.device_id || "";
+  }
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Not found" }, 404);
+  if (!(await userOwnsActiveDevice(env, who.user, deviceId))) return json({ error: "Not found" }, 404);
+  return null;
+}
+
 async function handleApi(request, env, url, ctx) {
   if (request.method === "POST" && url.pathname === "/api/pair") return claimPair(request, env);
-  if (!authorized(request, env)) {
-    return json({ error: "Sign in" }, 401);
+  if (request.method === "GET" && url.pathname === "/api/auth/config") {
+    return json({ google: googleReady(env) });
   }
-  if (request.method === "POST" && url.pathname === "/api/pair-codes") return createPairCode(env);
+  if (request.method === "GET" && url.pathname === "/api/account") return readAccount(request, env);
+  if (request.method === "POST" && url.pathname === "/api/account/plan") return requestPlan(request, env);
+  if (request.method === "GET" && url.pathname === "/api/admin/overview") {
+    if (!authorized(request, env)) return json({ error: "Sign in" }, 401);
+    return adminOverview(env);
+  }
+  if (request.method === "POST" && url.pathname === "/api/admin/user") {
+    if (!authorized(request, env)) return json({ error: "Sign in" }, 401);
+    return adminDecideUser(request, env);
+  }
+  if (request.method === "POST" && url.pathname === "/api/admin/plan") {
+    if (!authorized(request, env)) return json({ error: "Sign in" }, 401);
+    return adminDecidePlan(request, env);
+  }
+  const who = await identify(request, env);
+  if (!who) return json({ error: "Sign in" }, 401);
+  if (tillRoute(request, url)) {
+    if (who.role !== "admin") return json({ error: "Sign in" }, 401);
+  } else {
+    const denied = await enforceOwnership(request, env, url, who);
+    if (denied) return denied;
+  }
+  if (request.method === "POST" && url.pathname === "/api/pair-codes") return createPairCode(env, who);
   if (request.method === "GET" && url.pathname.startsWith("/api/pair-codes/")) {
-    return readPairCode(env, decodeURIComponent(url.pathname.slice("/api/pair-codes/".length)));
+    return readPairCode(env, decodeURIComponent(url.pathname.slice("/api/pair-codes/".length)), who);
   }
   if (request.method === "GET" && url.pathname === "/api/check-token") return json({ ok: true });
   if (request.method === "POST" && url.pathname === "/api/login") return json({ ok: true });
-  if (request.method === "GET" && url.pathname === "/api/devices") return listDevices(env);
+  if (request.method === "GET" && url.pathname === "/api/devices") return listDevices(env, who);
   if (request.method === "GET" && url.pathname === "/api/segments") return listSegments(env, url);
   if (request.method === "POST" && url.pathname === "/api/heartbeat") return heartbeat(request, env);
   if (request.method === "POST" && url.pathname === "/api/live") return saveLive(request, env);
@@ -108,11 +197,13 @@ async function handleApi(request, env, url, ctx) {
   if (request.method === "GET" && url.pathname === "/api/rtc") return readRtc(env, url);
   if (request.method === "POST" && url.pathname === "/api/rtc") return writeRtc(request, env);
   if (request.method === "POST" && url.pathname === "/api/camera") return setCamera(request, env);
+  if (request.method === "POST" && url.pathname === "/api/recording") return setRecording(request, env);
   if (request.method === "POST" && url.pathname === "/api/staff") return setStaff(request, env);
   if (request.method === "POST" && url.pathname === "/api/overhead") return setOverhead(request, env);
   if (request.method === "POST" && url.pathname === "/api/overhead-scan") return requestOverheadScan(request, env);
   if (request.method === "POST" && url.pathname === "/api/overhead-found") return saveOverheadFound(request, env);
   if (request.method === "POST" && url.pathname === "/api/lock") return setLock(request, env);
+  if (request.method === "POST" && url.pathname === "/api/launcher") return setLauncher(request, env);
   if (request.method === "POST" && url.pathname === "/api/camera-frame") return saveCamera(request, env);
   if (request.method === "GET" && url.pathname.startsWith("/api/camera/")) {
     return readCamera(env, decodeURIComponent(url.pathname.slice("/api/camera/".length)));
@@ -120,14 +211,14 @@ async function handleApi(request, env, url, ctx) {
   if (request.method === "POST" && url.pathname === "/api/segments") return saveSegment(request, env);
   if (request.method === "DELETE" && url.pathname === "/api/segments") return deleteDay(env, url);
   if (request.method === "GET" && url.pathname.startsWith("/api/media/")) {
-    return readMedia(request, env, url.pathname.slice("/api/media/".length));
+    return readMedia(request, env, url.pathname.slice("/api/media/".length), who);
   }
   if (request.method === "DELETE" && url.pathname.startsWith("/api/media/")) {
-    return deleteSegment(env, url.pathname.slice("/api/media/".length));
+    return deleteSegment(env, url.pathname.slice("/api/media/".length), who);
   }
   if (request.method === "POST" && url.pathname === "/api/inputs") return saveInputs(request, env);
   if (request.method === "GET" && url.pathname === "/api/inputs") return listInputs(env, url);
-  if (request.method === "GET" && url.pathname === "/api/search") return searchInputs(env, url);
+  if (request.method === "GET" && url.pathname === "/api/search") return searchInputs(env, url, who);
   return json({ error: "Not found" }, 404);
 }
 
@@ -170,13 +261,17 @@ async function allowPairTry(env, request) {
   return record.count <= 20;
 }
 
-async function createPairCode(env) {
+async function createPairCode(env, who) {
+  if (who && who.role === "user" && !canWatch(who.user)) {
+    return json({ error: "Approve the account and an active plan before pairing a register." }, 403);
+  }
   for (let attempt = 0; attempt < 5; attempt++) {
     const bytes = crypto.getRandomValues(new Uint8Array(6));
     const code = [...bytes].map((value) => PAIR_ALPHABET[value % PAIR_ALPHABET.length]).join("");
     const existing = await env.RECORDINGS.head(`pair/${code}.json`);
     if (existing) continue;
     const record = { expires: Date.now() + 10 * 60 * 1000, claimed: false };
+    if (who && who.role === "user") record.ownerUserId = who.user.id;
     await env.RECORDINGS.put(`pair/${code}.json`, JSON.stringify(record), {
       httpMetadata: { contentType: "application/json" },
     });
@@ -185,12 +280,15 @@ async function createPairCode(env) {
   return json({ error: "Could not create a pair code" }, 500);
 }
 
-async function readPairCode(env, raw) {
+async function readPairCode(env, raw, who) {
   const code = normalizePairCode(raw);
   if (!code) return json({ error: "Not found" }, 404);
   const object = await env.RECORDINGS.get(`pair/${code}.json`);
   if (!object) return json({ error: "Not found" }, 404);
   const pair = await object.json();
+  if (who && who.role !== "admin" && pair.ownerUserId !== who.user.id) {
+    return json({ error: "Not found" }, 404);
+  }
   const expired = Date.now() > Number(pair.expires || 0);
   return json({
     claimed: Boolean(pair.claimed) && !expired,
@@ -223,7 +321,12 @@ async function claimPair(request, env) {
   await env.RECORDINGS.put(`pair/${code}.json`, JSON.stringify(pair), {
     httpMetadata: { contentType: "application/json" },
   });
-  await writeStatus(env, { id: deviceId, name, recording: false, lastSeen: Date.now() });
+  const statusPatch = { id: deviceId, name, recording: false, lastSeen: Date.now() };
+  if (pair.ownerUserId) {
+    statusPatch.ownerUserId = pair.ownerUserId;
+    statusPatch.legacy = false;
+  }
+  await writeStatus(env, statusPatch);
   return json({ ok: true, token: env.TILL_TOKEN });
 }
 
@@ -238,15 +341,19 @@ async function heartbeat(request, env) {
     lastSeen: Date.now(),
   });
   const control = await readControl(env, body.device_id);
+  const allowed = await recordingAllowed(env, body.device_id);
   return json({
     ok: true,
-    camera: control.camera,
+    camera: allowed && control.camera,
     locked: control.locked,
     lockSeq: control.lockSeq,
     cashier: control.cashier,
     overhead: control.overhead,
     onvif: control.onvif,
     scan: control.scan,
+    launcherUntil: control.launcherUntil,
+    record: allowed && control.record,
+    planActive: allowed,
   });
 }
 
@@ -282,6 +389,9 @@ async function saveStream(request, env, ctx) {
   const seq = Number(request.headers.get("X-Stream-Seq"));
   if (!Number.isInteger(seq) || seq < 0 || seq > 1_000_000_000) return json({ error: "Stream is not valid" }, 400);
   const codec = String(request.headers.get("X-Stream-Codec") || "avc1.42E01E").replace(/[^a-zA-Z0-9.]/g, "").slice(0, 32) || "avc1.42E01E";
+  if (!(await recordingAllowed(env, deviceId))) return json({ ok: true, ignored: true });
+  const control = await readControl(env, deviceId);
+  if (!control.record) return json({ ok: true, ignored: true });
   const body = await request.arrayBuffer();
   if (body.byteLength < 8 || body.byteLength > 4_000_000) return json({ error: "Stream is not valid" }, 400);
   const base = `stream/${deviceId}/${kind}`;
@@ -337,6 +447,9 @@ async function readStream(env, url) {
 async function saveLive(request, env) {
   const deviceId = request.headers.get("X-Device-Id") || "";
   if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  if (!(await recordingAllowed(env, deviceId))) return json({ ok: true, ignored: true });
+  const control = await readControl(env, deviceId);
+  if (!control.record) return json({ ok: true, ignored: true });
   const name = cleanName(request.headers.get("X-Device-Name") || "Register");
   const jpeg = await readJpeg(request);
   if (!jpeg) return json({ error: "Picture is not valid" }, 400);
@@ -359,6 +472,26 @@ async function setCamera(request, env) {
   return json({ ok: true, camera });
 }
 
+async function setRecording(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const deviceId = body.device_id || "";
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  const control = await readControl(env, deviceId);
+  control.record = Boolean(body.enabled);
+  await writeControl(env, deviceId, control);
+  return json({ ok: true, record: control.record });
+}
+
+async function setLauncher(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const deviceId = body.device_id || "";
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  const control = await readControl(env, deviceId);
+  control.launcherUntil = body.show ? Date.now() + 15 * 60 * 1000 : 0;
+  await writeControl(env, deviceId, control);
+  return json({ ok: true, launcherUntil: control.launcherUntil });
+}
+
 async function setLock(request, env) {
   const body = await request.json();
   const deviceId = body.device_id || "";
@@ -378,8 +511,9 @@ async function setLock(request, env) {
 async function saveCamera(request, env) {
   const deviceId = request.headers.get("X-Device-Id") || "";
   if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  if (!(await recordingAllowed(env, deviceId))) return json({ ok: true, ignored: true });
   const control = await readControl(env, deviceId);
-  if (!control.camera) return json({ ok: true, ignored: true });
+  if (!control.record || !control.camera) return json({ ok: true, ignored: true });
   const jpeg = await readJpeg(request);
   if (!jpeg) return json({ error: "Picture is not valid" }, 400);
   await env.RECORDINGS.put(`camera/${deviceId}.jpg`, jpeg, {
@@ -421,6 +555,8 @@ async function readControl(env, deviceId) {
     onvif: "",
     scan: Boolean(parsed.scan),
     cameras: storedCameras(parsed.cameras),
+    launcherUntil: Number(parsed.launcherUntil || 0),
+    record: parsed.record === undefined ? true : Boolean(parsed.record),
   };
 }
 
@@ -436,6 +572,8 @@ async function writeControl(env, deviceId, control) {
     onvif: "",
     scan: Boolean(next.scan),
     cameras: storedCameras(next.cameras),
+    launcherUntil: Number(next.launcherUntil || 0),
+    record: next.record !== false,
   }), {
     httpMetadata: { contentType: "application/json" },
   });
@@ -578,7 +716,9 @@ async function storeSegment(request, env) {
   if (file.size > MAX_BYTES) return json({ error: "Clip is too large" }, 413);
   if (file.size < 1024) return json({ error: "Clip is empty" }, 400);
   const kind = streamKind(String(form.get("kind") || "screen")) || "screen";
+  if (!(await recordingAllowed(env, deviceId))) return json({ ok: true, ignored: true });
   const control = await readControl(env, deviceId);
+  if (!control.record) return json({ ok: true, ignored: true });
   const id = crypto.randomUUID().replaceAll("-", "");
   const key = `clips/${deviceId}/${localDay}/${id}.mp4`;
   await env.RECORDINGS.put(key, await file.arrayBuffer(), {
@@ -597,13 +737,14 @@ async function storeSegment(request, env) {
   return json({ ok: true, id });
 }
 
-async function listDevices(env) {
+async function listDevices(env, who) {
   const objects = await listAll(env, "status/");
   const devices = [];
   for (const item of objects) {
     const object = await env.RECORDINGS.get(item.key);
     if (!object) continue;
     const device = await object.json();
+    if (who && who.role !== "admin" && device.ownerUserId !== who.user.id) continue;
     const seen = Number(device.lastSeen || 0);
     device.online = Date.now() - seen < 90_000;
     device.recording = Boolean(device.recording) && device.online;
@@ -618,6 +759,15 @@ async function listDevices(env) {
       device.onvif = "";
       device.cameras = [];
       device.scan = Boolean(control.scan);
+      device.launcherUntil = Number(control.launcherUntil || 0);
+      device.record = control.record !== false;
+      if (!device.record) device.recording = false;
+      if (who && who.role === "user" && !canWatch(who.user)) {
+        device.recording = false;
+        device.record = false;
+        device.paused = true;
+      }
+      if (who && who.role !== "admin") delete device.ownerUserId;
     } else {
       device.camera = false;
       device.locked = false;
@@ -627,6 +777,8 @@ async function listDevices(env) {
       device.onvif = "";
       device.cameras = [];
       device.scan = false;
+      device.launcherUntil = 0;
+      device.record = true;
     }
     devices.push(device);
   }
@@ -674,7 +826,7 @@ async function deleteDay(env, url) {
   return json({ ok: true, removed: indexes.length }, 200, true);
 }
 
-async function deleteSegment(env, rawId) {
+async function deleteSegment(env, rawId, who) {
   const id = decodeURIComponent(rawId);
   if (!SEGMENT_ID.test(id)) return json({ error: "Not found" }, 404);
   const pointer = await env.RECORDINGS.get(`ids/${id}`);
@@ -682,6 +834,9 @@ async function deleteSegment(env, rawId) {
   const key = (await pointer.text()).trim();
   const match = /^clips\/([^/]+)\/(\d{4}-\d{2}-\d{2})\/([a-f0-9]{32})\.mp4$/.exec(key);
   if (!match) return json({ error: "Not found" }, 404);
+  if (who && who.role !== "admin" && !(await userOwnsActiveDevice(env, who.user, match[1]))) {
+    return json({ error: "Not found" }, 404);
+  }
   const indexKey = `index/${match[1]}/${match[2]}/${match[3]}.json`;
   const keys = [key, indexKey, `ids/${id}`];
   const stored = await env.RECORDINGS.get(indexKey);
@@ -712,6 +867,7 @@ async function saveInputs(request, env) {
   const deviceId = body.device_id || "";
   const day = body.local_day || "";
   if (!DEVICE_ID.test(deviceId) || !DAY.test(day)) return json({ error: "Choose a register and a day" }, 400);
+  if (!(await recordingAllowed(env, deviceId))) return json({ ok: true, ignored: true, stored: 0 });
   const control = await readControl(env, deviceId);
   const entries = Array.isArray(body.entries) ? body.entries.slice(0, 40) : [];
   let stored = 0;
@@ -749,12 +905,16 @@ async function listInputs(env, url) {
   return json({ entries }, 200, true);
 }
 
-async function searchInputs(env, url) {
+async function searchInputs(env, url, who) {
   const date = url.searchParams.get("date") || "";
   const query = String(url.searchParams.get("q") || "").trim().slice(0, 80);
   const deviceId = url.searchParams.get("device_id") || "";
   if (!DAY.test(date) || !query) return json({ error: "Type something to search" }, 400);
   if (deviceId && !DEVICE_ID.test(deviceId)) return json({ error: "Choose a register" }, 400);
+  if (who && who.role === "user" && !canWatch(who.user)) return json({ results: [] });
+  if (who && who.role === "user" && deviceId && !(await userOwnsActiveDevice(env, who.user, deviceId))) {
+    return json({ error: "Not found" }, 404);
+  }
   const needle = query.toLowerCase();
   const targets = [];
   if (deviceId) {
@@ -768,6 +928,7 @@ async function searchInputs(env, url) {
       if (!stored) continue;
       const device = await stored.json();
       if (!DEVICE_ID.test(device.id || "")) continue;
+      if (who && who.role !== "admin" && device.ownerUserId !== who.user.id) continue;
       targets.push({ id: device.id, name: device.name || "Register" });
     }
   }
@@ -793,12 +954,16 @@ async function searchInputs(env, url) {
   return json({ query, hits }, 200, true);
 }
 
-async function readMedia(request, env, id) {
+async function readMedia(request, env, id, who) {
   if (!SEGMENT_ID.test(id)) return json({ error: "Not found" }, 404);
   const pointer = await env.RECORDINGS.get(`ids/${id}`);
   if (!pointer) return json({ error: "Not found" }, 404);
   const key = (await pointer.text()).trim();
   if (!key.startsWith("clips/")) return json({ error: "Not found" }, 404);
+  const deviceId = key.split("/")[1] || "";
+  if (who && who.role !== "admin" && !(await userOwnsActiveDevice(env, who.user, deviceId))) {
+    return json({ error: "Not found" }, 404);
+  }
   return rangedObject(request, env, key, "video/mp4");
 }
 

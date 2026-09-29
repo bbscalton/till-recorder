@@ -1,0 +1,177 @@
+:root {
+  --paper: #f4efe6;
+  --ink: #1c1612;
+  --muted: #5e534a;
+  --line: #ddd4c6;
+  --red: #9f2d2d;
+  --panel: #fffaf3;
+  --ok: #1f6b45;
+  --warn: #8a5a12;
+  color-scheme: light;
+  font-family: Outfit, "Segoe UI", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+a { color: inherit; }
+
+.top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 4vw;
+  position: sticky;
+  top: 0;
+  background: rgba(244, 239, 230, 0.94);
+  backdrop-filter: blur(8px);
+  z-index: 2;
+  border-bottom: 1px solid var(--line);
+}
+
+.mark {
+  font-family: Fraunces, Georgia, serif;
+  font-size: 26px;
+  font-weight: 640;
+  text-decoration: none;
+  letter-spacing: -0.03em;
+}
+
+.dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin-left: 3px;
+  border-radius: 50%;
+  background: var(--red);
+  transform: translateY(-7px);
+}
+
+nav { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+nav a { text-decoration: none; font-weight: 500; }
+
+main { padding: 28px 4vw 64px; max-width: 1180px; }
+
+h1, h2 { font-family: Fraunces, Georgia, serif; font-weight: 560; letter-spacing: -0.03em; }
+h1 { font-size: clamp(36px, 5vw, 56px); line-height: 0.98; margin: 0 0 8px; }
+h2 { font-size: 28px; margin: 0 0 12px; }
+
+.lede, .note { color: var(--muted); line-height: 1.5; max-width: 42rem; }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 18px;
+}
+
+.stack { display: grid; gap: 16px; }
+.grid-2 { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 16px; }
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.stat strong { display: block; font-family: Fraunces, Georgia, serif; font-size: 28px; font-weight: 560; }
+.stat span { color: var(--muted); font-size: 13px; }
+
+button, .button {
+  font: inherit;
+  font-weight: 600;
+  background: var(--ink);
+  color: var(--paper);
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 16px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
+button.quiet, .button.quiet {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--ink);
+}
+
+button.deny {
+  background: var(--red);
+}
+
+button:disabled { opacity: 0.45; cursor: default; }
+
+label { display: block; font-size: 13px; font-weight: 600; margin: 12px 0 6px; }
+
+input[type="password"], input[type="text"] {
+  width: min(100%, 360px);
+  font: inherit;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: white;
+}
+
+.plans { display: grid; gap: 10px; }
+.plan {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 16px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+}
+.plan p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+
+.addon {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 8px 0 14px;
+  color: var(--muted);
+}
+
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  background: #ece4d8;
+  color: var(--ink);
+}
+
+.pill.approved { background: #d9efe3; color: var(--ok); }
+.pill.pending, .pill.requested { background: #f4e4c4; color: var(--warn); }
+.pill.denied, .pill.expired { background: #f3d4d4; color: var(--red); }
+
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; }
+
+.error { color: var(--red); }
+
+.queue { display: grid; gap: 8px; }
+.card-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.card-row p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+
+@media (max-width: 860px) {
+  .grid-2, .stats { grid-template-columns: 1fr 1fr; }
+  .card-row, .plan { grid-template-columns: 1fr; }
+}

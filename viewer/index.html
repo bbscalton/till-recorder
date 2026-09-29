@@ -16,7 +16,9 @@
     <a class="mark" href="index.html">Till<span class="dot" aria-hidden="true"></span></a>
     <nav>
       <a href="#how">How it works</a>
+      <a href="#plans">Plans</a>
       <a href="#install">Install</a>
+      <a class="nav-account" href="https://till-recorder.neuereatec.workers.dev/login">Sign in</a>
       <a class="nav-watch" href="watch.html">Watch</a>
     </nav>
   </header>
@@ -28,8 +30,8 @@
         <h1>See what they did on the register.</h1>
         <p class="lead">The camera shows the counter. Till Recorder shows the register screen, on an Android tablet or a Windows point-of-sale PC. It saves a clip while someone is using the screen, then you watch every register live or play the day back.</p>
         <div class="actions">
-          <a class="button" href="watch.html">Watch a register</a>
-          <a class="button quiet" href="#install">Get the app</a>
+          <a class="button" href="https://till-recorder.neuereatec.workers.dev/login">Sign in with Google</a>
+          <a class="button quiet" href="watch.html">Watch a register</a>
         </div>
       </div>
       <div class="device" aria-hidden="true">
@@ -87,13 +89,33 @@
       </ol>
     </section>
 
+    <section class="plans" id="plans">
+      <div>
+        <h2>An account, then a plan</h2>
+        <p>Sign in with Google. A new account stays pending until management approves it. After that, request a plan from your account page. Management approves the plan and collects the payment. This site does not take a card.</p>
+        <p>You only see your own tills: live view, playback, search, camera, and stop or start recording. Pair a register only after the account is approved and a plan is active. If the plan expires, recording pauses and the video stays hidden until a new plan is approved. The till stays paired.</p>
+        <div class="actions">
+          <a class="button" href="https://till-recorder.neuereatec.workers.dev/login">Create an account</a>
+          <a class="button quiet" href="https://till-recorder.neuereatec.workers.dev/account">Your account</a>
+        </div>
+      </div>
+      <ul>
+        <li><strong>1 week</strong> — $4,000</li>
+        <li><strong>1 month</strong> — $6,000</li>
+        <li><strong>3 months</strong> — $15,000</li>
+        <li>Recordings are kept for <strong>48 hours</strong> on every plan.</li>
+        <li>Storage add-on: <strong>$5,000 per month</strong>, on top of the plan price. That keeps recordings for <strong>30 days</strong> instead of 48 hours.</li>
+        <li>A one-week plan with the add-on is $9,000. One month with the add-on is $11,000. Three months with the add-on is $30,000.</li>
+      </ul>
+    </section>
+
     <section class="install" id="install">
       <div>
         <h2>Two downloads</h2>
-        <p>The Android APK is for the tablet. The Windows zip is for the point-of-sale PC: unzip it and run TillRecorder.exe. Pair either one with a code from the watch page. You do not type a web address or a token on the till. The Windows app records the desktop and the webcam and stays in the tray. An overhead IP camera is added on the till itself: Windows uses Add camera on the tray menu, and Android uses Overhead camera in the app. Enter an RTSP or ONVIF address and the camera username and password there. Find cameras looks on the store network, and the username and password are entered before the camera is saved. The watch page shows the picture that till sends. It does not show the password, and the manager does not paste the camera address into the website. Recordings upload to your Cloudflare account. This website is where you watch them.</p>
+        <p>The Android APK is for the tablet. The Windows zip is for the point-of-sale PC: unzip it and run TillRecorder.exe. Pair either one with a code from the watch page. You do not type a web address or a token on the till. The Windows app records the desktop and the webcam and stays in the tray. An overhead IP camera is added on the till itself: Windows uses Add camera on the tray menu, and Android uses Overhead camera in the app. Enter an RTSP or ONVIF address and the camera username and password there. Find cameras looks on the store network, and the username and password are entered before the camera is saved. The watch page shows the picture that till sends. It does not show the password, and the manager does not paste the camera address into the website. After an Android till is paired and watching, its home-screen icon is hidden. Show app on till on the watch page brings that icon back for 15 minutes. Hiding the icon does not by itself stop uninstall from Settings. Stop recording on a register pauses screen, camera, and overhead uploads. Start recording turns them back on without a new pair code. Clips already saved stay. Recordings upload to your Cloudflare account. This website is where you watch them.</p>
         <div class="actions">
-          <a class="button" href="https://github.com/bbscalton/till-recorder/releases/download/v1.5.9/till-recorder.apk">Download the Android APK</a>
-          <a class="button" href="https://github.com/bbscalton/till-recorder/releases/download/v1.5.9/till-recorder-windows.zip">Download for Windows</a>
+          <a class="button" href="https://github.com/bbscalton/till-recorder/releases/download/v1.5.11/till-recorder.apk">Download the Android APK</a>
+          <a class="button" href="https://github.com/bbscalton/till-recorder/releases/download/v1.5.11/till-recorder-windows.zip">Download for Windows</a>
         </div>
       </div>
       <ul>
@@ -111,7 +133,9 @@
 
   <footer>
     <p>Till Recorder</p>
+    <a href="https://till-recorder.neuereatec.workers.dev/login">Sign in</a>
     <a href="watch.html">Watch</a>
+    <a href="https://till-recorder.neuereatec.workers.dev/management">Management</a>
     <a href="https://github.com/bbscalton/till-recorder">Code</a>
   </footer>
 </body>

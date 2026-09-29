@@ -13,7 +13,7 @@
     <form id="loginForm" class="card">
       <p class="eyebrow">Watch</p>
       <h1>Open the registers</h1>
-      <p class="lede">Sign in with your token. Pair a register with a code. The tablet or Windows PC connects itself.</p>
+      <p class="lede">This form is the owner token. Store accounts sign in with Google, then open their own registers from the account page.</p>
       <label for="token">Token</label>
       <input id="token" type="password" autocomplete="current-password" required>
       <p id="loginError" class="error" hidden></p>
@@ -54,14 +54,17 @@
         <button id="backWall" type="button">All registers</button>
         <h1 id="detailName">Register</h1>
         <p id="liveState" class="status-line">Live</p>
+        <p id="recordState" class="status-line">Recording</p>
         <form id="staffForm" class="staff">
           <label for="cashierInput">Cashier</label>
           <input id="cashierInput" type="text" maxlength="60" placeholder="Who is on this till" autocomplete="off">
           <button type="submit">Save</button>
         </form>
         <button id="lockToggle" type="button">Lock</button>
+        <button id="launcherToggle" type="button">Show app on till</button>
       </div>
       <p id="lockHint" class="hint">Locks this register until the owner PIN is entered on the tablet.</p>
+      <p id="launcherHint" class="hint">Shows the Till Recorder icon on this register for 15 minutes. Hiding the icon does not stop uninstall from Settings.</p>
       <div class="moments">
         <article class="pane">
           <header><h2>Screen</h2></header>
@@ -73,6 +76,7 @@
         <article class="pane">
           <header>
             <h2>Camera</h2>
+            <button id="recordToggle" type="button">Stop recording</button>
             <button id="cameraToggle" type="button">Turn on</button>
           </header>
           <div class="frame">

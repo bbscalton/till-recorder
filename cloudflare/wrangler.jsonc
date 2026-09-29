@@ -22,5 +22,8 @@
   },
   "migrations": [
     { "tag": "v1-live-relay", "new_sqlite_classes": ["LiveRelay"] }
-  ]
+  ],
+  "triggers": {
+    "crons": ["0 8 * * *"]
+  }
 }
