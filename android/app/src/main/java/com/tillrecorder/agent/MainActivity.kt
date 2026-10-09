@@ -91,6 +91,19 @@ class MainActivity : AppCompatActivity() {
         binding.saveCamera.setOnClickListener { saveCamera(clear = false) }
         binding.clearCamera.setOnClickListener { saveCamera(clear = true) }
         watchCameraEdits()
+        showCameraSide()
+        binding.cameraSide.setOnCheckedChangeListener { _, checkedId ->
+            if (syncingCamera) return@setOnCheckedChangeListener
+            if (controlsLocked()) {
+                showCameraSide()
+                return@setOnCheckedChangeListener
+            }
+            val back = checkedId == R.id.cameraSideBack
+            if (store.backCamera != back) {
+                store.backCamera = back
+                RecordingService.refreshCameraSide()
+            }
+        }
         binding.confirmPin.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_DONE) {
                 savePin()
@@ -329,6 +342,7 @@ class MainActivity : AppCompatActivity() {
         // render() runs every 3 s. It only shows the saved camera in a box the user has not typed in since the
         // last load/save; typed (unsaved) text is never replaced, focused or not.
         showSavedCamera(force = false)
+        showCameraSide()
         binding.pendingText.text = when (pending) {
             0 -> getString(R.string.pending_clear)
             1 -> "1 clip is still on this tablet and will send when Cloudflare is reachable."
@@ -359,6 +373,14 @@ class MainActivity : AppCompatActivity() {
             syncingCamera = false
         }
         if (force) editedCamera.clear()
+    }
+
+    /** Shows the saved front/back choice. The choice is saved the moment it is tapped, so render() never undoes it. */
+    private fun showCameraSide() {
+        val wanted = if (store.backCamera) R.id.cameraSideBack else R.id.cameraSideFront
+        if (binding.cameraSide.checkedRadioButtonId == wanted) return
+        syncingCamera = true
+        try { binding.cameraSide.check(wanted) } finally { syncingCamera = false }
     }
 
     private fun watchCameraEdits() {

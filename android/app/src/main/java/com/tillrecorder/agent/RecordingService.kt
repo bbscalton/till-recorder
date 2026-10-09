@@ -845,9 +845,10 @@ class RecordingService : Service() {
                 {
                     handler.post {
                         if (!cameraOn) return@post
-                        publish("Front camera did not open. It will try again.")
+                        publish("Camera did not open. It will try again.")
                     }
                 },
+                useBack = { store.backCamera },
             )
             cameraVideo = video
             video.onPreview = { width, height, rotation, y, u, v ->
@@ -925,9 +926,10 @@ class RecordingService : Service() {
                 handler.post {
                     if (!cameraOn) return@post
                     cameraOn = false
-                    publish("Front camera did not open. It will try again.")
+                    publish("Camera did not open. It will try again.")
                 }
             },
+            useBack = { store.backCamera },
         )
         frontCamera = created
         return created
@@ -1064,6 +1066,16 @@ class RecordingService : Service() {
 
         @Volatile
         private var activeService: RecordingService? = null
+
+        /** The front/back choice changed: reopen the camera on the other side if it is on. */
+        fun refreshCameraSide() {
+            val service = activeService ?: return
+            service.handler.post {
+                if (!service.cameraOn) return@post
+                service.applyCamera(false)
+                service.applyCamera(true)
+            }
+        }
 
         fun refreshOverhead() {
             val service = activeService ?: return

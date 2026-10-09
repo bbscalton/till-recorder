@@ -50,6 +50,11 @@ class SettingsStore(context: Context) {
             prefs.edit().putLong(KEY_LAUNCHER_UNTIL, value).apply()
         }
 
+    /** True when the watch page's camera should be the tablet's back camera; false (default) is the front camera. */
+    var backCamera: Boolean
+        get() = prefs.getBoolean(KEY_BACK_CAMERA, false)
+        set(value) { prefs.edit().putBoolean(KEY_BACK_CAMERA, value).apply() }
+
     var overheadUrl: String
         get() = prefs.getString(KEY_OVERHEAD, "").orEmpty()
         set(value) {
@@ -156,6 +161,7 @@ class SettingsStore(context: Context) {
         private const val KEY_ERROR = "upload_error"
         private const val KEY_WATCH = "watch_enabled"
         private const val KEY_LAUNCHER_UNTIL = "launcher_until"
+        private const val KEY_BACK_CAMERA = "back_camera"
         private const val KEY_OVERHEAD = "overhead_url"
         private const val KEY_OVERHEAD_USER = "overhead_user"
         private const val KEY_OVERHEAD_PASSWORD = "overhead_password"

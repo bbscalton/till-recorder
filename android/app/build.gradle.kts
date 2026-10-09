@@ -11,8 +11,8 @@ android {
         applicationId = "com.tillrecorder.agent"
         minSdk = 26
         targetSdk = 35
-        versionCode = 20
-        versionName = "1.5.14"
+        versionCode = 21
+        versionName = "1.5.15"
     }
 
     buildTypes {

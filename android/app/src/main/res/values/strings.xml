@@ -42,6 +42,9 @@
     <string name="prevent_uninstall_explain">This asks Android to block uninstall of Till Recorder from Settings. It does not lock the phone or erase anything.</string>
     <string name="prevent_uninstall_note">Hiding the home-screen icon does not block Settings. Prevent uninstall is a separate step.</string>
     <string name="card_warning">A clip includes everything on the screen, and the text typed on this register is saved with it. Use a register that hides card numbers, and only give the token to people who should watch the day.</string>
+    <string name="register_camera_title">Register camera</string>
+    <string name="register_camera_front">Front</string>
+    <string name="register_camera_back">Back</string>
     <string name="camera_title">Overhead camera</string>
     <string name="camera_help">Paste an RTSP or ONVIF address, then the camera username and password. Find cameras looks on this register\'s network. Enter the username and password before you save. The watch page does not receive the password.</string>
     <string name="camera_url">RTSP or ONVIF address</string>

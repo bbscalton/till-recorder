@@ -29,6 +29,7 @@ class FrontCamera(
     private val context: Context,
     private val onJpeg: (ByteArray) -> Unit,
     private val onFailed: () -> Unit = {},
+    private val useBack: () -> Boolean = { false },
 ) {
     private val thread = HandlerThread("till-front-camera").apply { start() }
     private val handler = Handler(thread.looper)
@@ -97,10 +98,9 @@ class FrontCamera(
 
     private fun openCamera() {
         val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        val id = manager.cameraIdList.firstOrNull { cameraId ->
-            val facing = manager.getCameraCharacteristics(cameraId).get(CameraCharacteristics.LENS_FACING)
-            facing == CameraCharacteristics.LENS_FACING_FRONT
-        }
+        val ids = manager.cameraIdList.toList()
+        val id = CameraFacing.pick(ids.map { manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING) }, useBack())
+            ?.let { ids[it] }
         if (id == null) {
             open = false
             onFailed()
