@@ -191,6 +191,93 @@ if (launcherToggle) {
   });
 }
 
+// ---- Master PIN: generate in the browser, push to the selected register, follow its status.
+const pinGenerate = document.getElementById("pinGenerate");
+const pinSend = document.getElementById("pinSend");
+const pinValue = document.getElementById("pinValue");
+const pinHint = document.getElementById("pinHint");
+let generatedPin = "";
+let generatedFor = "";
+let pinTimer = 0;
+let pinWatched = "";
+
+function newMasterPin() {
+  for (;;) {
+    const bytes = new Uint32Array(1);
+    do { crypto.getRandomValues(bytes); } while (bytes[0] >= 4294000000);
+    const value = String(bytes[0] % 1000000).padStart(6, "0");
+    const digits = [...value].map(Number);
+    const step = digits[1] - digits[0];
+    const run = (step === 1 || step === -1) && digits.every((d, i) => i === 0 || d - digits[i - 1] === step);
+    if (!/^(\d)\1+$/.test(value) && !run) return value;
+  }
+}
+
+function showPinStatus(status) {
+  if (!pinHint || !status) return;
+  const text = {
+    pending: "Waiting for the register to pick it up (it checks in every few seconds while the app is open and online). Expires in 30 minutes.",
+    delivered: "Delivered to the register. Waiting for the app to confirm.",
+    acked: "Delivered and confirmed by the app.",
+    expired: "Expired before the register picked it up. Push again.",
+  }[status.state];
+  if (text) pinHint.textContent = text;
+}
+
+async function pollPinStatus() {
+  clearTimeout(pinTimer);
+  if (!selectedId || !pinHint) return;
+  const id = selectedId;
+  try {
+    const status = await api(`/api/master-pin?device_id=${encodeURIComponent(id)}`);
+    if (id !== selectedId) return;
+    showPinStatus(status);
+    if (status.state === "pending" || status.state === "delivered") pinTimer = setTimeout(pollPinStatus, 5000);
+  } catch (_error) { /* shown on the next action */ }
+}
+
+function syncPinDevice() {
+  if (!pinSend || pinWatched === selectedId) return;
+  pinWatched = selectedId;
+  generatedPin = "";
+  generatedFor = "";
+  pinValue.textContent = "";
+  pinSend.disabled = true;
+  pollPinStatus();
+}
+
+if (pinGenerate && pinSend) {
+  pinGenerate.addEventListener("click", () => {
+    if (!selectedId) return;
+    generatedPin = newMasterPin();
+    generatedFor = selectedId;
+    pinValue.textContent = generatedPin;
+    pinSend.disabled = false;
+    pinHint.textContent = "Write this PIN down, then press Push to POS. It is not saved on this page.";
+  });
+  pinSend.addEventListener("click", async () => {
+    if (!selectedId || !generatedPin || pinSend.disabled) return;
+    if (generatedFor !== selectedId) {
+      pinHint.textContent = "That PIN was generated for another register. Generate a new one.";
+      return;
+    }
+    pinSend.disabled = true;
+    try {
+      await api("/api/master-pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ device_id: selectedId, pin: generatedPin }),
+      });
+      pinHint.textContent = "Pushed. Waiting for the register to pick it up.";
+      pollPinStatus();
+    } catch (error) {
+      pinHint.textContent = error.message === "auth" ? "Sign in again." : "Could not push the PIN. Try again in a moment.";
+    } finally {
+      pinSend.disabled = !selectedId;
+    }
+  });
+}
+
 lockToggle.addEventListener("click", async () => {
   if (!selectedId || lockToggle.disabled) return;
   const current = devices.find((device) => device.id === selectedId);
@@ -387,6 +474,7 @@ function paintDetail(current) {
   lockToggle.textContent = locked ? "Unlock" : "Lock";
   lockToggle.classList.toggle("on", locked);
   lockToggle.disabled = !selectedId;
+  try { syncPinDevice(); } catch (_error) { /* PIN controls not ready yet */ }
   lockHint.textContent = locked
     ? "Locked. Press Unlock here, or enter the owner PIN on the tablet."
     : "Locks this register until the owner PIN is entered on the tablet.";

@@ -217,6 +217,8 @@ async function handleApi(request, env, url, ctx) {
   if (request.method === "POST" && url.pathname === "/api/overhead-scan") return requestOverheadScan(request, env);
   if (request.method === "POST" && url.pathname === "/api/overhead-found") return saveOverheadFound(request, env);
   if (request.method === "POST" && url.pathname === "/api/lock") return setLock(request, env);
+  if (request.method === "POST" && url.pathname === "/api/master-pin") return pushMasterPin(request, env);
+  if (request.method === "GET" && url.pathname === "/api/master-pin") return masterPinStatus(env, url);
   if (request.method === "POST" && url.pathname === "/api/launcher") return setLauncher(request, env);
   if (request.method === "POST" && url.pathname === "/api/camera-frame") return saveCamera(request, env);
   if (request.method === "GET" && url.pathname.startsWith("/api/camera/")) {
@@ -336,6 +338,7 @@ async function claimPair(request, env) {
     httpMetadata: { contentType: "application/json" },
   });
   await env.RECORDINGS.delete(`removed/${deviceId}`);
+  await env.RECORDINGS.delete(`pin-push/${deviceId}.json`);
   const statusPatch = { id: deviceId, name, recording: false, lastSeen: Date.now() };
   if (pair.ownerUserId) {
     statusPatch.ownerUserId = pair.ownerUserId;
@@ -358,8 +361,10 @@ async function heartbeat(request, env) {
   });
   const control = await readControl(env, body.device_id);
   const allowed = await recordingAllowed(env, body.device_id);
+  const pushedPin = await deliverMasterPin(env, body.device_id, body.master_pin_ack === true);
   return json({
     ok: true,
+    ...(pushedPin ? { master_pin: pushedPin } : {}),
     camera: allowed && control.camera,
     locked: control.locked,
     lockSeq: control.lockSeq,
@@ -370,7 +375,98 @@ async function heartbeat(request, env) {
     launcherUntil: control.launcherUntil,
     record: allowed && control.record,
     planActive: allowed,
+  }, 200, Boolean(pushedPin));
+}
+
+// ---- Master PIN push (Watch page -> Unruly POS app) -------------------------------------------------------------
+// One record per device in R2 at pin-push/<device>.json. The plain PIN exists only while state is "pending": the
+// first heartbeat that reaches the device returns it once as `master_pin` and the record is rewritten without it.
+// The app confirms with `master_pin_ack: true` on a later heartbeat. Pending PINs expire after 30 minutes.
+const PIN_TTL_MS = 30 * 60 * 1000;
+const PIN_PUSH_LIMIT = 5;
+const PIN_PUSH_WINDOW_MS = 10 * 60 * 1000;
+
+function trivialPin(pin) {
+  if (/^(\d)\1+$/.test(pin)) return true;
+  const digits = [...pin].map(Number);
+  const step = digits[1] - digits[0];
+  return (step === 1 || step === -1) && digits.every((d, i) => i === 0 || d - digits[i - 1] === step);
+}
+
+async function readPinPush(env, deviceId) {
+  const object = await env.RECORDINGS.get(`pin-push/${deviceId}.json`);
+  return object ? await object.json().catch(() => null) : null;
+}
+
+async function writePinPush(env, deviceId, record) {
+  await env.RECORDINGS.put(`pin-push/${deviceId}.json`, JSON.stringify(record), {
+    httpMetadata: { contentType: "application/json" },
   });
+}
+
+async function pushMasterPin(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const deviceId = body.device_id || "";
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  const pin = String(body.pin || "");
+  if (!/^\d{6}$/.test(pin) || trivialPin(pin)) {
+    return json({ error: "Use a 6-digit PIN that is not a repeat or a simple run." }, 400);
+  }
+  if (!(await env.RECORDINGS.head(`status/${deviceId}.json`)) || (await removedDevice(env, deviceId))) {
+    return json({ error: "Not found" }, 404);
+  }
+  const now = Date.now();
+  const previous = await readPinPush(env, deviceId);
+  const recent = (previous && Array.isArray(previous.recent) ? previous.recent : [])
+    .map(Number).filter((at) => now - at < PIN_PUSH_WINDOW_MS);
+  if (recent.length >= PIN_PUSH_LIMIT) {
+    return json({ error: "Too many pushes. Wait a few minutes." }, 429);
+  }
+  recent.push(now);
+  const record = { state: "pending", pin, createdAt: now, expires: now + PIN_TTL_MS, recent };
+  await writePinPush(env, deviceId, record);
+  return json({ ok: true, state: "pending", expires: record.expires }, 200, true);
+}
+
+async function masterPinStatus(env, url) {
+  const deviceId = url.searchParams.get("device_id") || "";
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  const record = await readPinPush(env, deviceId);
+  if (!record) return json({ state: "none" }, 200, true);
+  let state = record.state;
+  if (state === "pending" && Date.now() > Number(record.expires || 0)) {
+    state = "expired";
+    await writePinPush(env, deviceId, { state, createdAt: record.createdAt, expires: record.expires, recent: record.recent || [] });
+  }
+  return json({
+    state,
+    createdAt: Number(record.createdAt || 0),
+    expires: Number(record.expires || 0),
+    deliveredAt: Number(record.deliveredAt || 0),
+    ackedAt: Number(record.ackedAt || 0),
+  }, 200, true);
+}
+
+/** Called from heartbeat. Returns the pending PIN once (and erases it), records the app's confirmation. */
+async function deliverMasterPin(env, deviceId, acked) {
+  const record = await readPinPush(env, deviceId);
+  if (!record) return "";
+  const now = Date.now();
+  if (record.state === "pending") {
+    if (now > Number(record.expires || 0)) {
+      await writePinPush(env, deviceId, { state: "expired", createdAt: record.createdAt, expires: record.expires, recent: record.recent || [] });
+      return "";
+    }
+    const pin = String(record.pin || "");
+    await writePinPush(env, deviceId, {
+      state: "delivered", createdAt: record.createdAt, expires: record.expires, deliveredAt: now, recent: record.recent || [],
+    });
+    return /^\d{6}$/.test(pin) ? pin : "";
+  }
+  if (record.state === "delivered" && acked) {
+    await writePinPush(env, deviceId, { ...record, state: "acked", ackedAt: now });
+  }
+  return "";
 }
 
 async function openLive(request, env, url) {
@@ -1227,6 +1323,7 @@ async function removeDevice(env, deviceId, who) {
     `control/${deviceId}.json`,
     `live/${deviceId}.jpg`,
     `camera/${deviceId}.jpg`,
+    `pin-push/${deviceId}.json`,
   ];
   for (const prefix of [`clips/${deviceId}/`, `index/${deviceId}/`, `inputs/${deviceId}/`, `stream/${deviceId}/`]) {
     for (const item of await listAll(env, prefix)) {

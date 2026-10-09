@@ -65,6 +65,12 @@
         <button id="removeDevice" type="button">Remove device</button>
       </div>
       <p id="lockHint" class="hint">Locks this register until the owner PIN is entered on the tablet.</p>
+      <div class="actions" id="pinPush">
+        <button id="pinGenerate" type="button">Generate PIN</button>
+        <output id="pinValue" aria-live="polite"></output>
+        <button id="pinSend" type="button" disabled>Push to POS</button>
+      </div>
+      <p id="pinHint" class="hint">Generate a 6-digit master PIN, then push it to this register. The Unruly POS 2.0.0 app shows it once so you can write it down. If it is lost, generate and push a new one.</p>
       <p id="launcherHint" class="hint">Shows the Till Recorder icon on this register for 15 minutes. Hiding the icon does not stop uninstall from Settings.</p>
       <div class="moments">
         <article class="pane">
