@@ -6,8 +6,9 @@ Clips upload to the owner's Cloudflare account. The website is in `viewer/`.
 
 ## Download
 
-- Android APK: https://github.com/bbscalton/till-recorder/releases/download/v1.5.11/till-recorder.apk
-- Windows: https://github.com/bbscalton/till-recorder/releases/download/v1.5.11/till-recorder-windows.zip — unzip and run `TillRecorder.exe`
+- Android APK: https://github.com/bbscalton/till-recorder/releases/download/v1.5.13/till-recorder.apk
+- Windows: https://github.com/bbscalton/till-recorder/releases/download/v1.5.13/till-recorder-windows.zip — unzip and run `TillRecorder.exe`
+- Unruly POS 1.0.0 (Android APK and Windows setup): https://github.com/bbscalton/till-recorder/releases/tag/unruly-pos-1.0.0
 
 ## Pair
 
@@ -35,4 +36,4 @@ Approved users request a plan from https://till-recorder.neuereatec.workers.dev/
 
 A till can be paired only while the account is approved and a plan is active. An expired plan pauses new recordings and hides video. The pairing stays.
 
-Google sign-in needs two Wrangler secrets, `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. In Google Cloud, add this redirect URI: `https://till-recorder.neuereatec.workers.dev/auth/google/callback`. Until those secrets are set, the login page says sign-in is waiting on that setup.
+Until a Google client is connected, Continue with Google on the login page opens the Till Recorder client page in Google Cloud.

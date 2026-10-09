@@ -33,3 +33,11 @@ keystore.properties
 .dev.vars
 **/.wrangler/
 **/node_modules/
+# iOS local/signing files
+**/xcuserdata/
+**/DerivedData/
+*.p12
+*.mobileprovision
+*.cer
+*.xcarchive
+ios/build/

@@ -11,6 +11,7 @@ import {
   recordingAllowed,
   requestPlan,
   sessionUser,
+  signInFirebase,
   startGoogle,
   userOwnsActiveDevice,
 } from "./accounts.js";
@@ -154,8 +155,17 @@ async function enforceOwnership(request, env, url, who) {
 async function handleApi(request, env, url, ctx) {
   if (request.method === "POST" && url.pathname === "/api/pair") return claimPair(request, env);
   if (request.method === "GET" && url.pathname === "/api/auth/config") {
-    return json({ google: googleReady(env) });
+    return json({
+      google: googleReady(env),
+      firebase: {
+        apiKey: "AIzaSyCbr_X8p0_VyqIJd9l61kREnQPAWlRrXCM",
+        authDomain: "till-recorder-auth.firebaseapp.com",
+        projectId: "till-recorder-auth",
+        appId: "1:1041801068281:web:a56275e9bb2925d9a1ec28",
+      },
+    });
   }
+  if (request.method === "POST" && url.pathname === "/api/auth/firebase") return signInFirebase(request, env);
   if (request.method === "GET" && url.pathname === "/api/account") return readAccount(request, env);
   if (request.method === "POST" && url.pathname === "/api/account/plan") return requestPlan(request, env);
   if (request.method === "GET" && url.pathname === "/api/admin/overview") {
@@ -172,6 +182,9 @@ async function handleApi(request, env, url, ctx) {
   }
   const who = await identify(request, env);
   if (!who) return json({ error: "Sign in" }, 401);
+  if (request.method === "DELETE" && url.pathname.startsWith("/api/devices/")) {
+    return removeDevice(env, decodeURIComponent(url.pathname.slice("/api/devices/".length)), who);
+  }
   if (tillRoute(request, url)) {
     if (who.role !== "admin") return json({ error: "Sign in" }, 401);
   } else {
@@ -186,6 +199,7 @@ async function handleApi(request, env, url, ctx) {
   if (request.method === "POST" && url.pathname === "/api/login") return json({ ok: true });
   if (request.method === "GET" && url.pathname === "/api/devices") return listDevices(env, who);
   if (request.method === "GET" && url.pathname === "/api/segments") return listSegments(env, url);
+  if (request.method === "GET" && url.pathname === "/api/recording-days") return listRecordingDays(env, url);
   if (request.method === "POST" && url.pathname === "/api/heartbeat") return heartbeat(request, env);
   if (request.method === "POST" && url.pathname === "/api/live") return saveLive(request, env);
   if (request.method === "POST" && url.pathname === "/api/stream") return saveStream(request, env, ctx);
@@ -321,6 +335,7 @@ async function claimPair(request, env) {
   await env.RECORDINGS.put(`pair/${code}.json`, JSON.stringify(pair), {
     httpMetadata: { contentType: "application/json" },
   });
+  await env.RECORDINGS.delete(`removed/${deviceId}`);
   const statusPatch = { id: deviceId, name, recording: false, lastSeen: Date.now() };
   if (pair.ownerUserId) {
     statusPatch.ownerUserId = pair.ownerUserId;
@@ -333,6 +348,7 @@ async function claimPair(request, env) {
 async function heartbeat(request, env) {
   const body = await request.json();
   if (!DEVICE_ID.test(body.device_id || "")) return json({ error: "Device id is not valid" }, 400);
+  if (await removedDevice(env, body.device_id)) return json({ ok: true, removed: true });
   const name = cleanName(body.device_name);
   await writeStatus(env, {
     id: body.device_id,
@@ -384,6 +400,7 @@ async function pushLive(env, deviceId, kind, seq, codec, body) {
 async function saveStream(request, env, ctx) {
   const deviceId = request.headers.get("X-Device-Id") || "";
   if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  if (await removedDevice(env, deviceId)) return json({ ok: true, removed: true, ignored: true });
   const kind = request.headers.get("X-Stream-Kind") || "";
   if (!streamKind(kind)) return json({ error: "Stream is not valid" }, 400);
   const seq = Number(request.headers.get("X-Stream-Seq"));
@@ -447,6 +464,7 @@ async function readStream(env, url) {
 async function saveLive(request, env) {
   const deviceId = request.headers.get("X-Device-Id") || "";
   if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  if (await removedDevice(env, deviceId)) return json({ ok: true, removed: true, ignored: true });
   if (!(await recordingAllowed(env, deviceId))) return json({ ok: true, ignored: true });
   const control = await readControl(env, deviceId);
   if (!control.record) return json({ ok: true, ignored: true });
@@ -511,6 +529,7 @@ async function setLock(request, env) {
 async function saveCamera(request, env) {
   const deviceId = request.headers.get("X-Device-Id") || "";
   if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  if (await removedDevice(env, deviceId)) return json({ ok: true, removed: true, ignored: true });
   if (!(await recordingAllowed(env, deviceId))) return json({ ok: true, ignored: true });
   const control = await readControl(env, deviceId);
   if (!control.record || !control.camera) return json({ ok: true, ignored: true });
@@ -561,6 +580,7 @@ async function readControl(env, deviceId) {
 }
 
 async function writeControl(env, deviceId, control) {
+  if (await removedDevice(env, deviceId)) return;
   const previous = await readControl(env, deviceId);
   const next = { ...previous, ...control };
   await env.RECORDINGS.put(`control/${deviceId}.json`, JSON.stringify({
@@ -708,6 +728,7 @@ async function storeSegment(request, env) {
   const localDay = String(form.get("local_day") || "");
   const file = form.get("file");
   if (!DEVICE_ID.test(deviceId)) return json({ error: "Device id is not valid" }, 400);
+  if (await removedDevice(env, deviceId)) return json({ ok: true, removed: true, ignored: true });
   if (!DAY.test(localDay)) return json({ error: "Day is not valid" }, 400);
   if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs)) return json({ error: "Clip time is not valid" }, 400);
   const duration = endedAtMs - startedAtMs;
@@ -744,6 +765,7 @@ async function listDevices(env, who) {
     const object = await env.RECORDINGS.get(item.key);
     if (!object) continue;
     const device = await object.json();
+    if (await removedDevice(env, device.id)) continue;
     if (who && who.role !== "admin" && device.ownerUserId !== who.user.id) continue;
     const seen = Number(device.lastSeen || 0);
     device.online = Date.now() - seen < 90_000;
@@ -784,6 +806,23 @@ async function listDevices(env, who) {
   }
   devices.sort((a, b) => String(a.name).localeCompare(String(b.name)));
   return json({ devices });
+}
+
+async function listRecordingDays(env, url) {
+  const deviceId = url.searchParams.get("device_id") || "";
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Not valid" }, 400);
+  const days = [];
+  let cursor;
+  do {
+    const page = await env.RECORDINGS.list({ prefix: `index/${deviceId}/`, delimiter: "/", cursor });
+    for (const prefix of page.delimitedPrefixes || []) {
+      const day = String(prefix).split("/").filter(Boolean).pop() || "";
+      if (DAY.test(day)) days.push(day);
+    }
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+  days.sort();
+  return json({ days }, 200, true);
 }
 
 async function listSegments(env, url) {
@@ -867,6 +906,7 @@ async function saveInputs(request, env) {
   const deviceId = body.device_id || "";
   const day = body.local_day || "";
   if (!DEVICE_ID.test(deviceId) || !DAY.test(day)) return json({ error: "Choose a register and a day" }, 400);
+  if (await removedDevice(env, deviceId)) return json({ ok: true, removed: true, ignored: true, stored: 0 });
   if (!(await recordingAllowed(env, deviceId))) return json({ ok: true, ignored: true, stored: 0 });
   const control = await readControl(env, deviceId);
   const entries = Array.isArray(body.entries) ? body.entries.slice(0, 40) : [];
@@ -992,6 +1032,7 @@ async function rangedObject(request, env, key, contentType) {
 }
 
 async function writeStatus(env, device) {
+  if (await removedDevice(env, device.id)) return;
   const existing = await env.RECORDINGS.get(`status/${device.id}.json`);
   const previous = existing ? await existing.json() : {};
   const next = { ...previous, ...device };
@@ -1163,6 +1204,42 @@ function json(body, status = 200, fresh = false) {
       ...cors,
     },
   });
+}
+
+async function removedDevice(env, deviceId) {
+  if (!deviceId) return false;
+  return Boolean(await env.RECORDINGS.get(`removed/${deviceId}`));
+}
+
+async function removeDevice(env, deviceId, who) {
+  if (!DEVICE_ID.test(deviceId)) return json({ error: "Not found" }, 404);
+  const stored = await env.RECORDINGS.get(`status/${deviceId}.json`);
+  if (!stored) return json({ error: "Not found" }, 404);
+  const device = await stored.json();
+  if (who.role !== "admin" && (device.ownerUserId !== who.user.id || device.legacy !== false)) {
+    return json({ error: "Not found" }, 404);
+  }
+  await env.RECORDINGS.put(`removed/${deviceId}`, "1", {
+    httpMetadata: { contentType: "text/plain" },
+  });
+  const keys = [
+    `status/${deviceId}.json`,
+    `control/${deviceId}.json`,
+    `live/${deviceId}.jpg`,
+    `camera/${deviceId}.jpg`,
+  ];
+  for (const prefix of [`clips/${deviceId}/`, `index/${deviceId}/`, `inputs/${deviceId}/`, `stream/${deviceId}/`]) {
+    for (const item of await listAll(env, prefix)) {
+      keys.push(item.key);
+      if (!prefix.startsWith("index/")) continue;
+      const stored = await env.RECORDINGS.get(item.key);
+      if (!stored) continue;
+      const segment = await stored.json();
+      if (segment && typeof segment.id === "string" && segment.id) keys.push(`ids/${segment.id}`);
+    }
+  }
+  await deleteKeys(env, keys);
+  return json({ ok: true });
 }
 
 async function deleteKeys(env, keys) {

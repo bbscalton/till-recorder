@@ -215,6 +215,51 @@ async function upsertGoogleUser(env, profile) {
   return user;
 }
 
+const FIREBASE_API_KEY = "AIzaSyCbr_X8p0_VyqIJd9l61kREnQPAWlRrXCM";
+const FIREBASE_PROJECT = "till-recorder-auth";
+
+export async function signInFirebase(request, env) {
+  const body = await request.json().catch(() => ({}));
+  const idToken = String(body.idToken || "");
+  if (idToken.length < 20 || idToken.length > 9000) {
+    return Response.json({ error: "Google did not sign in" }, { status: 401 });
+  }
+  const lookup = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${FIREBASE_API_KEY}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken }),
+  });
+  if (!lookup.ok) return Response.json({ error: "Google did not sign in" }, { status: 401 });
+  const data = await lookup.json();
+  const account = data.users && data.users[0];
+  const providers = account && account.providerUserInfo || [];
+  const google = providers.some((item) => item.providerId === "google.com");
+  const email = clean(account && account.email, 120).toLowerCase();
+  const sub = clean(account && account.localId, 80);
+  if (!account || !google || !email || !sub || account.emailVerified === false) {
+    return Response.json({ error: "Google did not sign in" }, { status: 401 });
+  }
+  if (account.aud && account.aud !== FIREBASE_PROJECT) {
+    return Response.json({ error: "Google did not sign in" }, { status: 401 });
+  }
+  const user = await upsertGoogleUser(env, {
+    sub,
+    email,
+    name: clean(account.displayName || email, 80),
+  });
+  const session = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, "0")).join("");
+  await env.RECORDINGS.put(`sessions/${session}.json`, JSON.stringify({
+    userId: user.id,
+    expires: Date.now() + SESSION_MS,
+  }), { httpMetadata: { contentType: "application/json" } });
+  return new Response(JSON.stringify({ ok: true }), {
+    headers: {
+      "Content-Type": "application/json",
+      "Set-Cookie": sessionCookie(session),
+    },
+  });
+}
+
 export function logout() {
   return redirect("/login", clearCookie());
 }

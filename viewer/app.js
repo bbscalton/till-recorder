@@ -73,6 +73,7 @@ let searchHits = [];
 let searchFocusAt = 0;
 let showingPlayback = false;
 let pairTimer = 0;
+let seekLatest = false;
 const wallFeeds = new Map();
 
 function todayIso() {
@@ -293,6 +294,9 @@ document.getElementById("timeline").addEventListener("click", (event) => {
   playAt(start + ratio * (end - start));
 });
 
+document.getElementById("removeDevice").addEventListener("click", () => {
+  if (selectedId) removeRegister(selectedId);
+});
 document.getElementById("backWall").addEventListener("click", () => {
   selectedId = "";
   clearPlayer();
@@ -480,7 +484,23 @@ function renderDevices() {
       const recordLabel = document.createElement("span");
       recordLabel.className = "record-state";
       meta.append(name, chip, who, recordLabel);
-      button.append(video, meta);
+      const remove = document.createElement("span");
+      remove.className = "tile-remove";
+      remove.setAttribute("role", "button");
+      remove.tabIndex = 0;
+      remove.textContent = "Remove";
+      remove.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        removeRegister(button.dataset.id);
+      });
+      remove.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        event.stopPropagation();
+        removeRegister(button.dataset.id);
+      });
+      button.append(video, meta, remove);
       button.addEventListener("click", () => openTill(device.id));
       deviceList.appendChild(button);
       wallFeeds.set(device.id, new PushFeed(video, "screen", false));
@@ -525,6 +545,33 @@ function renderDevices() {
   }
 }
 
+async function removeRegister(id) {
+  const device = devices.find((item) => item.id === id);
+  const name = device && device.name ? device.name : "this register";
+  if (!window.confirm(`Remove ${name}? This deletes its recordings and unpairs it. The till will ask for a new pair code.`)) return;
+  const button = document.getElementById("removeDevice");
+  button.disabled = true;
+  try {
+    await api(`/api/devices/${encodeURIComponent(id)}`, { method: "DELETE" });
+    devices = devices.filter((item) => item.id !== id);
+    document.getElementById("status").textContent = `Removed ${name}.`;
+    if (selectedId === id) {
+      selectedId = "";
+      clearPlayer(true);
+      wallView.hidden = false;
+      detailView.hidden = true;
+      document.getElementById("searchScope").value = "all";
+      viewTitle.textContent = "All registers";
+      searchResults.hidden = true;
+    }
+    renderDevices();
+  } catch (error) {
+    if (error.message !== "auth") document.getElementById("status").textContent = "Could not remove that register.";
+  } finally {
+    button.disabled = false;
+  }
+}
+
 async function openTill(id) {
   if (selectedId && selectedId !== id) clearPlayer(true);
   selectedId = id;
@@ -533,7 +580,19 @@ async function openTill(id) {
   document.getElementById("searchScope").value = "one";
   const current = devices.find((device) => device.id === id);
   paintDetail(current);
+  seekLatest = true;
   await loadDay();
+}
+
+async function latestRecordingDay(id) {
+  try {
+    const payload = await api(`/api/recording-days?device_id=${encodeURIComponent(id)}`);
+    const days = Array.isArray(payload.days) ? payload.days.filter((day) => /^\d{4}-\d{2}-\d{2}$/.test(day)) : [];
+    return days.length ? days[days.length - 1] : "";
+  } catch (error) {
+    if (error.message === "auth") throw error;
+    return "";
+  }
 }
 
 async function loadDay() {
@@ -542,33 +601,58 @@ async function loadDay() {
   const payload = await api(`/api/segments?device_id=${encodeURIComponent(selectedId)}&date=${encodeURIComponent(dayInput.value || todayIso())}`);
   if (generation !== dayGeneration) return;
   segments = payload.segments || [];
-  const segmentKey = segments.map((segment) => segment.id + ":" + segment.startedAtMs + ":" + segment.endedAtMs + ":" + (segment.kind || "screen")).join("|");
-  daySize.textContent = segments.length
-    ? `${segments.length} clip(s) on this day. Screen, camera, and overhead share one timeline.`
-    : "Nothing was recorded on this day.";
+  const shownDay = dayInput.value || todayIso();
+  if (seekLatest && !segments.length && selectedId) {
+    seekLatest = false;
+    const requested = selectedId;
+    const latest = await latestRecordingDay(requested);
+    if (selectedId !== requested) return;
+    if (latest && latest !== shownDay) {
+      dayInput.value = latest;
+      await loadDay();
+      return;
+    }
+  } else if (segments.length) {
+    seekLatest = false;
+  }
+  const segmentKey = `${shownDay}:${segments.length}:${segments[0] ? segments[0].id : ""}:${segments.length ? segments[segments.length - 1].id : ""}`;
+  const clipLine = segments.length
+    ? `${segments.length} clip(s) on ${shownDay}. Screen, camera, and overhead share one timeline.`
+    : `Nothing was recorded on ${shownDay}.`;
+  daySize.textContent = clipLine;
+  document.getElementById("status").textContent = clipLine;
   deleteClip.hidden = !active || !segments.some((segment) => segment.id === active.id);
   downloadClip.hidden = deleteClip.hidden;
-  await loadTyped(generation);
-  if (segmentKey === track.dataset.segments) return;
-  track.dataset.segments = segmentKey;
-  track.replaceChildren();
-  if (!segments.length) return;
-  const start = segments[0].startedAtMs;
-  const end = segments[segments.length - 1].endedAtMs;
-  const span = Math.max(1, end - start);
-  for (const segment of segments) {
-    const kind = kindOf(segment);
-    const block = document.createElement("div");
-    block.className = "segment" + (kind === "screen" ? "" : " " + kind);
-    block.dataset.id = segment.id;
-    block.title = kind === "camera" ? "Camera" : kind === "overhead" ? "Overhead" : "Screen";
-    block.addEventListener("click", (event) => {
-      event.stopPropagation();
-      playAt(segment.startedAtMs + 50);
-    });
-    block.style.left = `${((segment.startedAtMs - start) / span) * 100}%`;
-    block.style.width = `${Math.max(0.4, ((segment.endedAtMs - segment.startedAtMs) / span) * 100)}%`;
-    track.appendChild(block);
+  if (!(segmentKey === track.dataset.marker && track.childElementCount === segments.length)) {
+    track.dataset.marker = segmentKey;
+    track.replaceChildren();
+    if (segments.length) {
+      const start = segments[0].startedAtMs;
+      const end = segments[segments.length - 1].endedAtMs;
+      const span = Math.max(1, end - start);
+      for (const segment of segments) {
+        const kind = kindOf(segment);
+        const block = document.createElement("div");
+        block.className = "segment" + (kind === "screen" ? "" : " " + kind);
+        block.dataset.id = segment.id;
+        block.title = kind === "camera" ? "Camera" : kind === "overhead" ? "Overhead" : "Screen";
+        block.addEventListener("click", (event) => {
+          event.stopPropagation();
+          playAt(segment.startedAtMs + 50);
+        });
+        block.style.left = `${((segment.startedAtMs - start) / span) * 100}%`;
+        block.style.width = `${Math.max(0.4, ((segment.endedAtMs - segment.startedAtMs) / span) * 100)}%`;
+        track.appendChild(block);
+      }
+    }
+  }
+  try {
+    await loadTyped(generation);
+  } catch (error) {
+    if (error.message === "auth") throw error;
+    if (generation !== dayGeneration) return;
+    typed = [];
+    renderTyped();
   }
 }
 

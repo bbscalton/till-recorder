@@ -25,36 +25,66 @@
     <h1>Google, then approval.</h1>
     <p class="lede">A new Google account is pending. You cannot pair a till or watch video until management approves the account and a plan.</p>
     <section class="panel stack" style="margin-top: 22px; max-width: 560px;">
-      <p id="googleNote" class="note">Checking Google sign-in…</p>
+      <p id="googleNote" class="note">Use the Google account for this store. Management still has to approve a new registration.</p>
       <div class="row">
-        <a id="googleButton" class="button" href="/auth/google" hidden>Continue with Google</a>
+        <button id="googleButton" class="button" type="button">Continue with Google</button>
       </div>
       <p class="note">The owner still opens registers with the existing token on the watch page. That path is unchanged.</p>
       <a class="button quiet" href="watch.html">Owner token sign-in</a>
     </section>
   </main>
-  <script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
+    import { getAuth, getRedirectResult, GoogleAuthProvider, signInWithPopup, signInWithRedirect } from "https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyCbr_X8p0_VyqIJd9l61kREnQPAWlRrXCM",
+      authDomain: "till-recorder-auth.firebaseapp.com",
+      projectId: "till-recorder-auth",
+      appId: "1:1041801068281:web:a56275e9bb2925d9a1ec28",
+    };
     const note = document.getElementById("googleNote");
     const button = document.getElementById("googleButton");
-    const params = new URLSearchParams(location.search);
-    const flag = params.get("google");
-    fetch("/api/auth/config", { cache: "no-store" })
-      .then((response) => response.json())
-      .then((config) => {
-        if (config.google) {
-          note.textContent = flag === "failed"
-            ? "Google did not finish sign-in. Try again."
-            : "Use the Google account for this store. Management still has to approve a new registration.";
-          button.hidden = false;
+    const auth = getAuth(initializeApp(firebaseConfig));
+    const provider = new GoogleAuthProvider();
+
+    async function finish(user) {
+      const idToken = await user.getIdToken();
+      const response = await fetch("/api/auth/firebase", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken }),
+      });
+      if (!response.ok) {
+        note.textContent = "Google did not finish sign-in. Try again.";
+        return;
+      }
+      location.href = "/account";
+    }
+
+    getRedirectResult(auth).then((result) => {
+      if (result && result.user) return finish(result.user);
+    }).catch(() => {
+      note.textContent = "Google did not finish sign-in. Try again.";
+    });
+
+    button.addEventListener("click", async () => {
+      note.textContent = "Opening Google…";
+      try {
+        const credential = await signInWithPopup(auth, provider);
+        await finish(credential.user);
+      } catch (error) {
+        if (error && error.code === "auth/popup-blocked") {
+          await signInWithRedirect(auth, provider);
           return;
         }
-        button.hidden = true;
-        note.textContent = "Google sign-in is waiting on setup. The owner sets GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET on the worker, and adds this redirect URI in Google Cloud: https://till-recorder.neuereatec.workers.dev/auth/google/callback. The rest of the site is ready.";
-      })
-      .catch(() => {
-        button.hidden = true;
-        note.textContent = "Sign-in could not be checked. Google setup may still be waiting. The redirect URI is https://till-recorder.neuereatec.workers.dev/auth/google/callback.";
-      });
+        if (error && (error.code === "auth/popup-closed-by-user" || error.code === "auth/cancelled-popup-request")) {
+          note.textContent = "Use the Google account for this store. Management still has to approve a new registration.";
+          return;
+        }
+        note.textContent = "Google did not finish sign-in. Try again.";
+      }
+    });
   </script>
 </body>
 </html>

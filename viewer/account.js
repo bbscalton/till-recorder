@@ -26,13 +26,16 @@ function renderSignedOut(google) {
   signOut.hidden = true;
   const note = google
     ? "Sign in with Google to request a plan and see your tills."
-    : "Google sign-in is waiting on setup. The owner sets GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET, and adds https://till-recorder.neuereatec.workers.dev/auth/google/callback in Google Cloud.";
+    : "Continue with Google opens Google so this store can be approved.";
+  const href = google
+    ? "/auth/google"
+    : "/login";
   app.innerHTML = `
     <p class="lede">Account</p>
     <h1>Sign in to see your tills.</h1>
     <p class="lede">${note}</p>
     <div class="row">
-      ${google ? `<a class="button" href="/auth/google">Continue with Google</a>` : `<a class="button" href="/login">Sign-in status</a>`}
+      <a class="button" href="${href}">Continue with Google</a>
     </div>
   `;
 }

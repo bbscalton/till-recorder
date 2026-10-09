@@ -1,0 +1,436 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		B10000000000000000000021 /* TillRecorderApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000021 /* TillRecorderApp.swift */; };
+		B10000000000000000000022 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000022 /* RootView.swift */; };
+		B10000000000000000000023 /* FrontCamera.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000023 /* FrontCamera.swift */; };
+		B10000000000000000000026 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000026 /* PrivacyInfo.xcprivacy */; };
+		B1000000000000000000002C /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1000000000000000000002C /* SessionStore.swift */; };
+		B1000000000000000000002D /* ShopClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1000000000000000000002D /* ShopClient.swift */; };
+		B1000000000000000000002E /* Fmp4Muxer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1000000000000000000002E /* Fmp4Muxer.swift */; };
+		B1000000000000000000002F /* H264Encoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1000000000000000000002F /* H264Encoder.swift */; };
+		B10000000000000000000015 /* TillRecorderBroadcast.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F10000000000000000000005 /* TillRecorderBroadcast.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		E10000000000000000000027 /* SampleHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000027 /* SampleHandler.swift */; };
+		E10000000000000000000028 /* ScreenRelay.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000028 /* ScreenRelay.swift */; };
+		E1000000000000000000002B /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = F1000000000000000000002B /* PrivacyInfo.xcprivacy */; };
+		E1000000000000000000002C /* SessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1000000000000000000002C /* SessionStore.swift */; };
+		E1000000000000000000002D /* ShopClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1000000000000000000002D /* ShopClient.swift */; };
+		E1000000000000000000002E /* Fmp4Muxer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1000000000000000000002E /* Fmp4Muxer.swift */; };
+		E1000000000000000000002F /* H264Encoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1000000000000000000002F /* H264Encoder.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A10000000000000000000041 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A10000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000000000000000000003;
+			remoteInfo = TillRecorderBroadcast;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A1000000000000000000000C /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B10000000000000000000015 /* TillRecorderBroadcast.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		F10000000000000000000004 /* TillRecorder.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = TillRecorder.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		F10000000000000000000005 /* TillRecorderBroadcast.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TillRecorderBroadcast.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		F10000000000000000000021 /* TillRecorderApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TillRecorderApp.swift; sourceTree = "<group>"; };
+		F10000000000000000000022 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		F10000000000000000000023 /* FrontCamera.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrontCamera.swift; sourceTree = "<group>"; };
+		F10000000000000000000024 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F10000000000000000000025 /* TillRecorder.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TillRecorder.entitlements; sourceTree = "<group>"; };
+		F10000000000000000000026 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		F10000000000000000000027 /* SampleHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SampleHandler.swift; sourceTree = "<group>"; };
+		F10000000000000000000028 /* ScreenRelay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenRelay.swift; sourceTree = "<group>"; };
+		F10000000000000000000029 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		F1000000000000000000002A /* Broadcast.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Broadcast.entitlements; sourceTree = "<group>"; };
+		F1000000000000000000002B /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		F1000000000000000000002C /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
+		F1000000000000000000002D /* ShopClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShopClient.swift; sourceTree = "<group>"; };
+		F1000000000000000000002E /* Fmp4Muxer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fmp4Muxer.swift; sourceTree = "<group>"; };
+		F1000000000000000000002F /* H264Encoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = H264Encoder.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A1000000000000000000000A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A1000000000000000000000B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A10000000000000000000031 = {
+			isa = PBXGroup;
+			children = (
+				A10000000000000000000032 /* TillRecorder */,
+				A10000000000000000000033 /* Broadcast */,
+				A10000000000000000000034 /* Shared */,
+				A10000000000000000000035 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A10000000000000000000032 /* TillRecorder */ = {
+			isa = PBXGroup;
+			children = (
+				F10000000000000000000021 /* TillRecorderApp.swift */,
+				F10000000000000000000022 /* RootView.swift */,
+				F10000000000000000000023 /* FrontCamera.swift */,
+				F10000000000000000000024 /* Info.plist */,
+				F10000000000000000000025 /* TillRecorder.entitlements */,
+				F10000000000000000000026 /* PrivacyInfo.xcprivacy */,
+			);
+			path = TillRecorder;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000033 /* Broadcast */ = {
+			isa = PBXGroup;
+			children = (
+				F10000000000000000000027 /* SampleHandler.swift */,
+				F10000000000000000000028 /* ScreenRelay.swift */,
+				F10000000000000000000029 /* Info.plist */,
+				F1000000000000000000002A /* Broadcast.entitlements */,
+				F1000000000000000000002B /* PrivacyInfo.xcprivacy */,
+			);
+			path = Broadcast;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000034 /* Shared */ = {
+			isa = PBXGroup;
+			children = (
+				F1000000000000000000002C /* SessionStore.swift */,
+				F1000000000000000000002D /* ShopClient.swift */,
+				F1000000000000000000002E /* Fmp4Muxer.swift */,
+				F1000000000000000000002F /* H264Encoder.swift */,
+			);
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000035 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F10000000000000000000004 /* TillRecorder.app */,
+				F10000000000000000000005 /* TillRecorderBroadcast.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A10000000000000000000002 /* TillRecorder */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000000000000000000000E /* Build configuration list for PBXNativeTarget "TillRecorder" */;
+			buildPhases = (
+				A10000000000000000000006 /* Sources */,
+				A1000000000000000000000A /* Frameworks */,
+				A10000000000000000000008 /* Resources */,
+				A1000000000000000000000C /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A10000000000000000000042 /* PBXTargetDependency */,
+			);
+			name = TillRecorder;
+			productName = TillRecorder;
+			productReference = F10000000000000000000004 /* TillRecorder.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A10000000000000000000003 /* TillRecorderBroadcast */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A1000000000000000000000F /* Build configuration list for PBXNativeTarget "TillRecorderBroadcast" */;
+			buildPhases = (
+				A10000000000000000000007 /* Sources */,
+				A1000000000000000000000B /* Frameworks */,
+				A10000000000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TillRecorderBroadcast;
+			productName = TillRecorderBroadcast;
+			productReference = F10000000000000000000005 /* TillRecorderBroadcast.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A10000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					A10000000000000000000002 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					A10000000000000000000003 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = A1000000000000000000000D /* Build configuration list for PBXProject "TillRecorder" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A10000000000000000000031;
+			productRefGroup = A10000000000000000000035 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A10000000000000000000002 /* TillRecorder */,
+				A10000000000000000000003 /* TillRecorderBroadcast */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A10000000000000000000008 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B10000000000000000000026 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E1000000000000000000002B /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A10000000000000000000006 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B10000000000000000000021 /* TillRecorderApp.swift in Sources */,
+				B10000000000000000000022 /* RootView.swift in Sources */,
+				B10000000000000000000023 /* FrontCamera.swift in Sources */,
+				B1000000000000000000002C /* SessionStore.swift in Sources */,
+				B1000000000000000000002D /* ShopClient.swift in Sources */,
+				B1000000000000000000002E /* Fmp4Muxer.swift in Sources */,
+				B1000000000000000000002F /* H264Encoder.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000000000000000000007 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E10000000000000000000027 /* SampleHandler.swift in Sources */,
+				E10000000000000000000028 /* ScreenRelay.swift in Sources */,
+				E1000000000000000000002C /* SessionStore.swift in Sources */,
+				E1000000000000000000002D /* ShopClient.swift in Sources */,
+				E1000000000000000000002E /* Fmp4Muxer.swift in Sources */,
+				E1000000000000000000002F /* H264Encoder.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A10000000000000000000042 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000000000000000000003 /* TillRecorderBroadcast */;
+			targetProxy = A10000000000000000000041 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A10000000000000000000011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A10000000000000000000012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A10000000000000000000013 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_ENTITLEMENTS = TillRecorder/TillRecorder.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TillRecorder/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tillrecorder.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A10000000000000000000014 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_ENTITLEMENTS = TillRecorder/TillRecorder.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = TillRecorder/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tillrecorder.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A10000000000000000000015 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Broadcast/Broadcast.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Broadcast/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tillrecorder.ios.broadcast;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A10000000000000000000016 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Broadcast/Broadcast.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Broadcast/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.tillrecorder.ios.broadcast;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A1000000000000000000000D /* Build configuration list for PBXProject "TillRecorder" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000011 /* Debug */,
+				A10000000000000000000012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1000000000000000000000E /* Build configuration list for PBXNativeTarget "TillRecorder" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000013 /* Debug */,
+				A10000000000000000000014 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A1000000000000000000000F /* Build configuration list for PBXNativeTarget "TillRecorderBroadcast" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A10000000000000000000015 /* Debug */,
+				A10000000000000000000016 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A10000000000000000000001 /* Project object */;
+}

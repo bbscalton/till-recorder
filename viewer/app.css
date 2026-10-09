@@ -40,7 +40,8 @@ input, select { width: 100%; padding: 8px 10px; background: #0e1014; border: 1px
 .pair-code { margin: 0 0 8px; font-size: 32px; letter-spacing: 0.12em; font-weight: 700; }
 .wall { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; padding: 16px 18px; }
 .wall-note { margin: 0 18px 18px; }
-.tile { display: flex; flex-direction: column; gap: 8px; text-align: left; padding: 8px; background: var(--panel); border-radius: 10px; }
+.tile { position: relative; display: flex; flex-direction: column; gap: 8px; text-align: left; padding: 8px; background: var(--panel); border-radius: 10px; }
+.tile-remove { position: absolute; top: 14px; right: 14px; z-index: 2; background: #242a33; border: 1px solid #6a4038; border-radius: 6px; padding: 4px 8px; font-size: 12px; cursor: pointer; }
 .tile video, .tile .still { width: 100%; aspect-ratio: 16/10; object-fit: contain; background: #000; border-radius: 6px; }
 .tile-meta { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
 .tile-meta strong { font-size: 16px; }
@@ -85,7 +86,7 @@ input, select { width: 100%; padding: 8px 10px; background: #0e1014; border: 1px
 .transcript li.empty { display: block; color: var(--muted); }
 .transcript time, .who { color: var(--muted); }
 .form-actions { display: flex; gap: 8px; margin-top: 12px; }
-#deleteDay, #deleteClip { border-color: #6a4038; }
+#deleteDay, #deleteClip, #removeDevice { border-color: #6a4038; }
 [hidden] { display: none !important; }
 @media (max-width: 1100px) {
   .topbar, .moments, .lower, .staff { display: flex; flex-direction: column; align-items: stretch; }
