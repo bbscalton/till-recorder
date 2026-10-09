@@ -70,7 +70,7 @@
         <article class="pane">
           <header><h2>Screen</h2></header>
           <div class="frame">
-            <video id="live" muted autoplay playsinline></video>
+            <video id="live" controls controlslist="nodownload noplaybackrate" autoplay playsinline></video>
             <video id="player" controls playsinline hidden></video>
           </div>
         </article>
@@ -81,7 +81,7 @@
             <button id="cameraToggle" type="button">Turn on</button>
           </header>
           <div class="frame">
-            <video id="camera" muted autoplay playsinline hidden></video>
+            <video id="camera" controls controlslist="nodownload noplaybackrate" autoplay playsinline hidden></video>
             <video id="playCamera" controls playsinline hidden></video>
             <p id="cameraHint" class="camera-off">Off. Turn it on to see the person at the register.</p>
           </div>
@@ -89,7 +89,7 @@
         <article class="pane">
           <header><h2>Overhead</h2></header>
           <div class="frame">
-            <video id="overhead" muted autoplay playsinline hidden></video>
+            <video id="overhead" controls controlslist="nodownload noplaybackrate" autoplay playsinline hidden></video>
             <video id="playOverhead" controls playsinline hidden></video>
             <p id="overheadHint" class="camera-off">No overhead camera has been added on this register.</p>
           </div>

@@ -768,11 +768,20 @@ function playAt(ms) {
   renderTyped();
 }
 
+// Live feeds start muted (browsers only autoplay muted video); the controls unmute them and the choice is kept.
+for (const feed of [live, document.getElementById("camera"), document.getElementById("overhead")]) {
+  if (feed) feed.addEventListener("volumechange", () => { feed.dataset.sound = feed.muted ? "" : "1"; });
+}
+
 function cue(video, segment, offset) {
   video.hidden = false;
   const go = () => {
     try { video.currentTime = offset; } catch (error) {}
-    video.play().catch(() => {});
+    // Saved clips play with sound; if the browser refuses, fall back to muted (the controls unmute).
+    video.play().catch(() => {
+      video.muted = true;
+      video.play().catch(() => {});
+    });
   };
   if (video.dataset.segment !== segment.id) {
     video.dataset.segment = segment.id;
@@ -997,7 +1006,7 @@ class LiveFeed {
       throw new Error("This browser cannot play the live video.");
     }
     this.media = new MediaSource();
-    this.video.muted = true;
+    if (!this.video.dataset.sound) this.video.muted = true;
     await new Promise((resolve, reject) => {
       this.media.addEventListener("sourceopen", () => resolve(), { once: true });
       this.video.src = URL.createObjectURL(this.media);
@@ -1462,7 +1471,7 @@ class PushFeed {
     this.initBytes = init;
     if (typeof MediaSource === "undefined" || !MediaSource.isTypeSupported(`video/mp4; codecs="${codec}"`)) return;
     this.media = new MediaSource();
-    this.video.muted = true;
+    if (!this.video.dataset.sound) this.video.muted = true;
     await new Promise((resolve, reject) => {
       this.media.addEventListener("sourceopen", () => resolve(), { once: true });
       this.video.src = URL.createObjectURL(this.media);
