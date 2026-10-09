@@ -15,3 +15,21 @@ windows/bin/
 windows/obj/
 windows/publish/
 .DS_Store
+
+# Local build outputs, backups, logs and secrets
+backups/
+out-*/
+windows/publish-*/
+windows-selftest/bin/
+windows-selftest/obj/
+android/.kotlin/
+till-*.txt
+till-ui.xml
+*.keystore
+*.jks
+keystore.properties
+.env
+.env.*
+.dev.vars
+**/.wrangler/
+**/node_modules/

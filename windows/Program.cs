@@ -141,6 +141,9 @@ sealed class TrayApp : ApplicationContext
     readonly RecorderEngine engine = new();
     readonly System.Windows.Forms.Timer timer;
     AppSettings settings = AppSettings.Load();
+    long nextIdleBeat;
+    int idleRemoved;
+    bool pairing;
 
     public TrayApp()
     {
@@ -164,10 +167,19 @@ sealed class TrayApp : ApplicationContext
         {
             TypedInput.Tick();
             icon.Text = Trim(engine.Status);
+            if (engine.TakeRemoved() || Interlocked.Exchange(ref idleRemoved, 0) == 1) ShowPairAfterRemoval();
+            else PollRemovalWhileStopped();
         };
         timer.Start();
         if (settings.Paired) RegisterStartup();
         if (settings.Paired && settings.Armed) Start();
+        else if (settings.Paired)
+        {
+            RemoteControl? control = null;
+            try { control = Task.Run(() => new ShopClient().Heartbeat(settings, false, CancellationToken.None)).GetAwaiter().GetResult(); }
+            catch { }
+            if (control?.Removed == true) ShowPairAfterRemoval();
+        }
         else if (!settings.Paired) Pair();
     }
 
@@ -220,42 +232,84 @@ sealed class TrayApp : ApplicationContext
             }
         }
         engine.Stop();
+        RemoteControl? stopped = null;
+        try { stopped = Task.Run(() => new ShopClient().Heartbeat(settings, false, CancellationToken.None)).GetAwaiter().GetResult(); }
+        catch { }
+        if (stopped?.Removed == true) ShowPairAfterRemoval();
         icon.Text = "Stopped";
+    }
+
+    void PollRemovalWhileStopped()
+    {
+        if (pairing || settings.Armed || !settings.Paired) return;
+        var now = Environment.TickCount64;
+        if (now < nextIdleBeat) return;
+        nextIdleBeat = now + 5000;
+        var snapshot = settings;
+        Task.Run(() =>
+        {
+            try
+            {
+                using var shop = new ShopClient();
+                var control = shop.Heartbeat(snapshot, false, CancellationToken.None).GetAwaiter().GetResult();
+                if (control?.Removed == true) Interlocked.Exchange(ref idleRemoved, 1);
+            }
+            catch { }
+        });
+    }
+
+    void ShowPairAfterRemoval()
+    {
+        if (pairing) return;
+        settings.Token = "";
+        settings.Armed = false;
+        settings.Save();
+        engine.Stop();
+        Pair();
     }
 
     void Pair()
     {
-        TypedInput.Pause();
-        DialogResult result;
-        string registerName;
-        string pairCode;
-        using (var form = new PairForm(settings.DeviceName))
-        {
-            result = form.ShowDialog();
-            registerName = form.RegisterName;
-            pairCode = form.PairCode;
-        }
-        TypedInput.Resume();
-        if (result != DialogResult.OK) return;
-        settings.DeviceName = ShopClient.Clean(registerName);
-        if (string.IsNullOrWhiteSpace(settings.DeviceId)) settings.DeviceId = Guid.NewGuid().ToString("N");
-        string? token = null;
+        if (pairing) return;
+        pairing = true;
         try
         {
-            token = Task.Run(() => new ShopClient().ClaimPair(settings.DeviceId, settings.DeviceName, pairCode, CancellationToken.None)).GetAwaiter().GetResult();
+            TypedInput.Pause();
+            DialogResult result;
+            string registerName;
+            string pairCode;
+            using (var form = new PairForm(settings.DeviceName))
+            {
+                result = form.ShowDialog();
+                registerName = form.RegisterName;
+                pairCode = form.PairCode;
+            }
+            TypedInput.Resume();
+            if (result != DialogResult.OK) return;
+            settings.DeviceName = ShopClient.Clean(registerName);
+            if (string.IsNullOrWhiteSpace(settings.DeviceId)) settings.DeviceId = Guid.NewGuid().ToString("N");
+            string? token = null;
+            try
+            {
+                token = Task.Run(() => new ShopClient().ClaimPair(settings.DeviceId, settings.DeviceName, pairCode, CancellationToken.None)).GetAwaiter().GetResult();
+            }
+            catch
+            {
+                token = null;
+            }
+            if (token == null)
+            {
+                MessageBox.Show("That pair code did not work. Create a new one on the watch page.", "Till Recorder");
+                return;
+            }
+            settings.Token = token;
+            settings.Save();
+            Start();
         }
-        catch
+        finally
         {
-            token = null;
+            pairing = false;
         }
-        if (token == null)
-        {
-            MessageBox.Show("That pair code did not work. Create a new one on the watch page.", "Till Recorder");
-            return;
-        }
-        settings.Token = token;
-        settings.Save();
-        Start();
     }
 
     void AddCamera()
@@ -430,49 +484,28 @@ sealed class CameraForm : Form
                 status.Text = "Paste an RTSP or ONVIF address, or clear the camera.";
                 return;
             }
-            var http = address.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || address.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
-            var rtsp = address.StartsWith("rtsp://", StringComparison.OrdinalIgnoreCase) || address.StartsWith("rtsps://", StringComparison.OrdinalIgnoreCase);
-            if (!http && !rtsp)
+            var target = CameraAddress.Resolve(address, userName, secret);
+            if (target.Kind == CameraKind.Invalid)
             {
-                status.Text = "Use an rtsp:// address or an ONVIF http:// address.";
-                return;
-            }
-            if (http && userName.Length == 0)
-            {
-                status.Text = "Enter the camera username and password, then save.";
+                status.Text = target.Error;
                 return;
             }
             save.Enabled = false;
+            status.Text = "Checking the camera...";
             Task.Run(() =>
             {
-                string? bare = null;
-                string resolvedUser = userName;
-                string resolvedPassword = secret;
-                if (http)
-                {
-                    bare = OnvifDiscovery.TryStream(address, userName, secret);
-                }
-                else
-                {
-                    var split = CameraAddress.Split(address);
-                    bare = CameraAddress.Bare(address);
-                    if (resolvedUser.Length == 0)
-                    {
-                        resolvedUser = split.User;
-                        resolvedPassword = split.Password;
-                    }
-                }
+                var (bare, problem) = CameraSetup.Check(target);
                 BeginInvoke(() =>
                 {
                     save.Enabled = true;
-                    if (string.IsNullOrWhiteSpace(bare))
+                    if (problem != null || string.IsNullOrWhiteSpace(bare))
                     {
-                        status.Text = "The camera did not accept the username and password.";
+                        status.Text = problem ?? "The camera did not give a playable stream.";
                         return;
                     }
                     CameraUrl = bare;
-                    CameraUser = resolvedUser;
-                    CameraPassword = resolvedPassword;
+                    CameraUser = target.User;
+                    CameraPassword = target.Password;
                     DialogResult = DialogResult.OK;
                     Close();
                 });

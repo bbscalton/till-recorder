@@ -25,6 +25,7 @@ class BootReceiver : BroadcastReceiver() {
         if (action !in BOOT_ACTIONS) return
         if (!userUnlocked(context)) return
         val store = SettingsStore(context)
+        LauncherIcon.apply(context, store)
         val accessibilityOn = TillAccessibilityService.enabled(context)
         if (shouldAutoStartWatching(store.watchEnabled, store.isConfigured, accessibilityOn)) {
             Log.i(TAG, "Starting built-in watch from $action")

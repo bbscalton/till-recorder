@@ -15,6 +15,9 @@ data class RemoteControl(
     val lockSeq: Int,
     val overhead: String = "",
     val scan: Boolean = false,
+    val launcherUntil: Long = 0L,
+    val record: Boolean = true,
+    val removed: Boolean = false,
 )
 
 data class RtcIce(val candidate: String, val sdpMid: String?, val sdpMLineIndex: Int)
@@ -117,6 +120,9 @@ object ShopClient {
                     lockSeq = json.optInt("lockSeq", 0),
                     overhead = json.optString("overhead", ""),
                     scan = json.optBoolean("scan", false),
+                    launcherUntil = json.optLong("launcherUntil", 0L),
+                    record = if (json.has("record")) json.optBoolean("record", true) else true,
+                    removed = json.optBoolean("removed", false),
                 )
             }
         } catch (error: Exception) {

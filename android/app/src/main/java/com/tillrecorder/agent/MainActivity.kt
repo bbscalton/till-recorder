@@ -1,6 +1,8 @@
 package com.tillrecorder.agent
 
 import android.Manifest
+import android.app.admin.DevicePolicyManager
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -79,6 +81,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
         binding.savePinButton.setOnClickListener { savePin() }
+        binding.preventUninstall.setOnClickListener { preventUninstall() }
         binding.findCameras.setOnClickListener { findCameras() }
         binding.saveCamera.setOnClickListener { saveCamera(clear = false) }
         binding.clearCamera.setOnClickListener { saveCamera(clear = true) }
@@ -105,9 +108,17 @@ class MainActivity : AppCompatActivity() {
         binding.pinError.visibility = View.GONE
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        render()
+    }
+
     override fun onStart() {
         super.onStart()
+        render()
         binding.root.post(ticker)
+        LauncherIcon.apply(this, store)
         if (store.watchEnabled && store.isConfigured && TillAccessibilityService.enabled(this)) {
             RecordingService.startBuiltIn(this)
         }
@@ -217,6 +228,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun uninstallProtectionOn(): Boolean {
+        val admin = getSystemService(DevicePolicyManager::class.java) ?: return false
+        return admin.isAdminActive(ComponentName(this, UninstallGuard::class.java))
+    }
+
+    private fun preventUninstall() {
+        if (!store.isConfigured || controlsLocked() || uninstallProtectionOn()) return
+        val explanation = getString(R.string.prevent_uninstall_explain)
+        startActivity(
+            Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN)
+                .putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, ComponentName(this, UninstallGuard::class.java))
+                .putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, explanation)
+        )
+    }
+
     private fun unlock() {
         val pin = binding.pinEntry.text?.toString().orEmpty()
         if (store.checkPin(pin)) {
@@ -275,6 +301,11 @@ class MainActivity : AppCompatActivity() {
         binding.lockPanel.visibility = if (locked) View.VISIBLE else View.GONE
         binding.pinSetupPanel.visibility = if (needsPin) View.VISIBLE else View.GONE
         binding.controlsPanel.visibility = if (locked || needsPin) View.GONE else View.VISIBLE
+        val adminOn = uninstallProtectionOn()
+        binding.preventUninstall.visibility = if (paired) View.VISIBLE else View.GONE
+        binding.preventUninstallNote.visibility = if (paired) View.VISIBLE else View.GONE
+        binding.preventUninstall.setText(if (adminOn) R.string.prevent_uninstall_on else R.string.prevent_uninstall)
+        binding.preventUninstall.isEnabled = !adminOn
         if (locked) {
             binding.lockStatus.setText(if (recording) R.string.watching_locked else R.string.stopped_locked)
         }
@@ -348,39 +379,27 @@ class MainActivity : AppCompatActivity() {
         val address = binding.cameraUrl.text?.toString().orEmpty().trim()
         val user = binding.cameraUser.text?.toString().orEmpty().trim()
         val password = binding.cameraPassword.text?.toString().orEmpty()
-        val http = address.startsWith("http://") || address.startsWith("https://")
-        val rtsp = address.startsWith("rtsp://") || address.startsWith("rtsps://")
-        if (address.isEmpty() || (!http && !rtsp)) {
-            binding.cameraStatus.setText(R.string.camera_need_rtsp)
-            return
-        }
-        if (http && user.isEmpty()) {
-            binding.cameraStatus.setText(R.string.camera_need_login)
+        val target = CameraAddress.resolve(address, user, password)
+        if (target.kind == CameraAddress.Kind.INVALID) {
+            binding.cameraStatus.text = target.error
             return
         }
         binding.saveCamera.isEnabled = false
+        binding.cameraStatus.setText(R.string.camera_checking)
         lifecycleScope.launch {
-            val resolved = withContext(Dispatchers.IO) {
-                if (http) {
-                    val stream = OnvifDiscovery.tryStream(address, user, password) ?: return@withContext null
-                    Triple(stream, user, password)
-                } else {
-                    val split = CameraAddress.split(address)
-                    val bare = CameraAddress.bare(address)
-                    if (user.isEmpty()) Triple(bare, split.user, split.password) else Triple(bare, user, password)
-                }
-            }
-            if (resolved == null) {
+            val outcome = withContext(Dispatchers.IO) { CameraSetup.check(target) }
+            val error = outcome.error
+            if (error != null) {
                 binding.saveCamera.isEnabled = true
-                binding.cameraStatus.setText(R.string.camera_login)
+                binding.cameraStatus.text = error
                 return@launch
             }
-            store.overheadUrl = resolved.first
-            store.overheadUser = resolved.second
-            store.overheadPassword = resolved.third
-            binding.cameraUrl.setText(resolved.first)
-            binding.cameraUser.setText(resolved.second)
-            if (!binding.cameraPassword.hasFocus()) binding.cameraPassword.setText(resolved.third)
+            store.overheadUrl = outcome.url
+            store.overheadUser = target.user
+            store.overheadPassword = target.password
+            binding.cameraUrl.setText(outcome.url)
+            binding.cameraUser.setText(target.user)
+            if (!binding.cameraPassword.hasFocus()) binding.cameraPassword.setText(target.password)
             syncCamera(cleared = false)
         }
     }

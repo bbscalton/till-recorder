@@ -37,6 +37,10 @@
     <string name="watching_locked">Watching this register.</string>
     <string name="stopped_locked">Watching is off.</string>
     <string name="pin_required_stop">Set a PIN before watching can be stopped.</string>
+    <string name="prevent_uninstall">Prevent uninstall</string>
+    <string name="prevent_uninstall_on">Uninstall protection is on</string>
+    <string name="prevent_uninstall_explain">This asks Android to block uninstall of Till Recorder from Settings. It does not lock the phone or erase anything.</string>
+    <string name="prevent_uninstall_note">Hiding the home-screen icon does not block Settings. Prevent uninstall is a separate step.</string>
     <string name="card_warning">A clip includes everything on the screen, and the text typed on this register is saved with it. Use a register that hides card numbers, and only give the token to people who should watch the day.</string>
     <string name="camera_title">Overhead camera</string>
     <string name="camera_help">Paste an RTSP or ONVIF address, then the camera username and password. Find cameras looks on this register\'s network. Enter the username and password before you save. The watch page does not receive the password.</string>
@@ -46,7 +50,8 @@
     <string name="camera_find">Find cameras</string>
     <string name="camera_save">Save camera</string>
     <string name="camera_clear">Clear camera</string>
-    <string name="camera_need_rtsp">Use an rtsp:// address or an ONVIF http:// address.</string>
+    <string name="camera_need_rtsp">Use the camera IP address, an ONVIF http:// address or an rtsp:// address.</string>
+    <string name="camera_checking">Checking the camera…</string>
     <string name="camera_need_login">Enter the camera username and password, then save.</string>
     <string name="camera_login">The camera did not accept the username and password.</string>
     <string name="camera_saved">Saved. This register will pull that camera.</string>

@@ -44,6 +44,17 @@ class PinLockTest {
     }
 }
 
+class LauncherIconTest {
+    @Test
+    fun iconStaysVisibleUntilPairedAndWatching() {
+        assertTrue(shouldShowLauncher(configured = false, watchEnabled = false, showUntilMs = 0, nowMs = 100))
+        assertTrue(shouldShowLauncher(configured = true, watchEnabled = false, showUntilMs = 0, nowMs = 100))
+        assertFalse(shouldShowLauncher(configured = true, watchEnabled = true, showUntilMs = 0, nowMs = 100))
+        assertTrue(shouldShowLauncher(configured = true, watchEnabled = true, showUntilMs = 200, nowMs = 100))
+        assertFalse(shouldShowLauncher(configured = true, watchEnabled = true, showUntilMs = 100, nowMs = 100))
+    }
+}
+
 class BootStartTest {
     @Test
     fun startsOnlyWhenWatchingWasLeftOn() {

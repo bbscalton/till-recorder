@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Self-checks for the overhead camera address/RTSP/ONVIF code in ..\windows. Not shipped. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>TillRecorder</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\windows\CameraAddress.cs" Link="CameraAddress.cs" />
+    <Compile Include="..\windows\RtspClient.cs" Link="RtspClient.cs" />
+    <Compile Include="..\windows\OnvifDiscovery.cs" Link="OnvifDiscovery.cs" />
+    <Compile Include="..\windows\AppSettings.cs" Link="AppSettings.cs" />
+  </ItemGroup>
+</Project>

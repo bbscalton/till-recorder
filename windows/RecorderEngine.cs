@@ -15,6 +15,8 @@ sealed class RecorderEngine : IDisposable
     CancellationTokenSource? cancel;
     Task? loop;
     public string Status { get; private set; } = "Stopped";
+    int removedFlag;
+    public bool TakeRemoved() => Interlocked.Exchange(ref removedFlag, 0) == 1;
     public double ScreenEncodeFps { get; private set; }
     public double CameraEncodeFps { get; private set; }
     public bool WebcamOpen { get; private set; }
@@ -98,6 +100,7 @@ sealed class RecorderEngine : IDisposable
         var cameraWindow = screenWindow;
         var nextHeartbeat = 0L;
         var heartbeatGap = 5_000L;
+        var recordWanted = true;
         var nextScreen = 0L;
         var nextCamera = 0L;
         BgraFrame? latestDesktop = seeded;
@@ -111,25 +114,66 @@ sealed class RecorderEngine : IDisposable
             try
             {
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            if (!recordWanted)
+            {
+                if (screenClip.IsOpen) screenClip.Close(now);
+                if (cameraClip.IsOpen) cameraClip.Close(now);
+                if (webcam.Running)
+                {
+                    webcam.Stop();
+                    cameraEncoder?.Dispose();
+                    cameraEncoder = null;
+                    WebcamOpen = false;
+                    cameraLive.Reset();
+                }
+                screenLive.Reset();
+                overheadRelay.Apply("", shop, settings);
+                Status = "Not recording";
+            }
             if (now >= nextHeartbeat)
             {
-                var control = await shop.Heartbeat(settings, screenClip.IsOpen || cameraClip.IsOpen, token);
+                var control = await shop.Heartbeat(settings, recordWanted, token);
                 heartbeatGap = control == null ? Math.Min(30_000, heartbeatGap * 2) : 5_000;
                 nextHeartbeat = now + heartbeatGap;
-                overheadRelay.Apply(CameraAddress.Pull(settings), shop, settings);
                 if (control != null)
                 {
-                    if (control.Camera != cameraWanted)
-                        AppLog.Write(control.Camera ? "camera on" : "camera off");
-                    cameraWanted = control.Camera;
-                    var label = CameraAddress.Label(settings.Overhead ?? "");
-                    if (!string.Equals(label, control.Overhead ?? "", StringComparison.Ordinal))
-                        _ = shop.PublishOverhead(settings, label.Length > 0, label, CancellationToken.None);
+                    if (control.Removed)
+                    {
+                        settings.Token = "";
+                        settings.Armed = false;
+                        settings.Save();
+                        AppLog.Write("watch page removed this register");
+                        Interlocked.Exchange(ref removedFlag, 1);
+                        try { cancel?.Cancel(); } catch { }
+                        break;
+                    }
+                    if (control.Record != recordWanted)
+                        AppLog.Write(control.Record ? "record on" : "record off");
+                    recordWanted = control.Record;
+                    if (recordWanted)
+                    {
+                        if (control.Camera != cameraWanted)
+                            AppLog.Write(control.Camera ? "camera on" : "camera off");
+                        cameraWanted = control.Camera;
+                        overheadRelay.Apply(CameraAddress.Pull(settings), shop, settings);
+                        var label = CameraAddress.Label(settings.Overhead ?? "");
+                        if (!string.Equals(label, control.Overhead ?? "", StringComparison.Ordinal))
+                            _ = shop.PublishOverhead(settings, label.Length > 0, label, CancellationToken.None);
+                        await UploadPending(settings, token);
+                    }
+                    else
+                    {
+                        cameraWanted = false;
+                    }
                 }
-                await UploadPending(settings, token);
                 var typed = TypedInput.Drain();
                 if (typed.Count > 0 && !await shop.UploadInputs(settings, typed, token))
                     TypedInput.Restore(typed);
+            }
+            if (!recordWanted)
+            {
+                Thread.Sleep(200);
+                continue;
             }
 
             var grabbed = desktopOpen ? desktop.TryGrab(8) : null;

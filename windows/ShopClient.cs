@@ -10,6 +10,8 @@ sealed class RemoteControl
     public bool Locked { get; init; }
     public string Overhead { get; init; } = "";
     public bool Scan { get; init; }
+    public bool Record { get; init; } = true;
+    public bool Removed { get; init; }
 }
 
 sealed class ShopClient : IDisposable
@@ -72,7 +74,9 @@ sealed class ShopClient : IDisposable
                 Camera = root.TryGetProperty("camera", out var camera) && camera.GetBoolean(),
                 Locked = root.TryGetProperty("locked", out var locked) && locked.GetBoolean(),
                 Overhead = root.TryGetProperty("overhead", out var overhead) ? overhead.GetString() ?? "" : "",
-                Scan = root.TryGetProperty("scan", out var scan) && scan.GetBoolean()
+                Scan = root.TryGetProperty("scan", out var scan) && scan.GetBoolean(),
+                Record = !root.TryGetProperty("record", out var record) || record.ValueKind != JsonValueKind.False,
+                Removed = root.TryGetProperty("removed", out var removed) && removed.ValueKind == JsonValueKind.True
             };
         }
         catch (Exception error) when (!cancel.IsCancellationRequested)

@@ -229,6 +229,25 @@
             android:text="@string/start"
             app:backgroundTint="@color/record" />
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/preventUninstall"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/prevent_uninstall"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/preventUninstallNote"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/prevent_uninstall_note"
+            android:textColor="@color/muted"
+            android:textSize="14sp"
+            android:visibility="gone" />
+
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

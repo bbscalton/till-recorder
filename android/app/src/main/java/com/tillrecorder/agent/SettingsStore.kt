@@ -44,6 +44,12 @@ class SettingsStore(context: Context) {
             prefs.edit().putBoolean(KEY_WATCH, value).apply()
         }
 
+    var launcherUntil: Long
+        get() = prefs.getLong(KEY_LAUNCHER_UNTIL, 0L)
+        set(value) {
+            prefs.edit().putLong(KEY_LAUNCHER_UNTIL, value).apply()
+        }
+
     var overheadUrl: String
         get() = prefs.getString(KEY_OVERHEAD, "").orEmpty()
         set(value) {
@@ -115,6 +121,13 @@ class SettingsStore(context: Context) {
                 settings.token.isNotBlank()
         }
 
+    fun forgetPairing() {
+        prefs.edit()
+            .putString(KEY_TOKEN, "")
+            .putBoolean(KEY_WATCH, false)
+            .apply()
+    }
+
     fun save(name: String, baseUrl: String, token: String, remind: Boolean) {
         prefs.edit()
             .putString(KEY_NAME, name.trim().take(80))
@@ -142,6 +155,7 @@ class SettingsStore(context: Context) {
         private const val KEY_REMIND = "remind"
         private const val KEY_ERROR = "upload_error"
         private const val KEY_WATCH = "watch_enabled"
+        private const val KEY_LAUNCHER_UNTIL = "launcher_until"
         private const val KEY_OVERHEAD = "overhead_url"
         private const val KEY_OVERHEAD_USER = "overhead_user"
         private const val KEY_OVERHEAD_PASSWORD = "overhead_password"
