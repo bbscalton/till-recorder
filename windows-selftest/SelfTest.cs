@@ -21,6 +21,15 @@ static class SelfTest
     static int Main(string[] args)
     {
         if (args.Length >= 1 && args[0] == "live") return Live(args);
+        if (args.Length >= 1 && args[0] == "discover")
+        {
+            // The Find cameras probe only (WS-Discovery, no login). Prints every camera that answered.
+            Console.WriteLine("interfaces: " + string.Join(", ", OnvifDiscovery.MulticastAddresses()));
+            var cameras = OnvifDiscovery.Probe();
+            foreach (var camera in cameras) Console.WriteLine($"{camera.Host}  {camera.Name}  {camera.Url}");
+            Console.WriteLine($"found {cameras.Count}");
+            return 0;
+        }
         AddressChecks();
         RtspChecks();
         OnvifChecks();
@@ -118,7 +127,29 @@ static class SelfTest
         Eq("http://192.168.1.111/onvif/device_service", cam?.Url, "discovery ipv4 xaddr");
         True(OnvifDiscovery.ProbeMessage().Contains("xmlns:dn="), "probe declares dn namespace");
         Eq("rtsp://192.168.1.111:554/live", OnvifDiscovery.SameHost("rtsp://0.0.0.0:554/live", "http://192.168.1.111/onvif/device_service"), "bogus host");
+        DiscoveryChecks();
     }
+
+    static void DiscoveryChecks()
+    {
+        static string Reply(string ip, string uuid) =>
+            "<d:ProbeMatch><a:EndpointReference><a:Address>urn:uuid:" + uuid + "</a:Address></a:EndpointReference>" +
+            "<d:Scopes>onvif://www.onvif.org/type/video_encoder onvif://www.onvif.org/hardware/IPC-HFW1230S onvif://www.onvif.org/name/Dahua</d:Scopes>" +
+            "<d:XAddrs>http://" + ip + "/onvif/device_service</d:XAddrs></d:ProbeMatch>";
+        var found = new DiscoveryResults();
+        // Three probe rounds, replies on two interfaces, cloned endpoint ids: still one entry per camera.
+        for (var round = 0; round < 3; round++)
+            foreach (var last in new[] { 118, 111, 113, 112, 115, 114, 117, 116, 113 })
+                found.Add(Reply("192.168.1." + last, "same-id"), "192.168.1." + last);
+        Eq("192.168.1.111,192.168.1.112,192.168.1.113,192.168.1.114,192.168.1.115,192.168.1.116,192.168.1.117,192.168.1.118",
+            string.Join(",", found.Cameras.Select(c => c.Host)), "discovery keeps all 8 cameras once, sorted");
+        Eq("Dahua IPC-HFW1230S", found.Cameras[0].Name, "discovery model from scopes");
+        Eq("IPC-HDW", OnvifDiscovery.ModelFromReply("<d:Scopes>onvif://www.onvif.org/hardware/IPC-HDW</d:Scopes>"), "model only");
+        Eq("Camera", OnvifDiscovery.CameraFromReply("<d:ProbeMatch><d:XAddrs>http://192.168.1.9/onvif/device_service</d:XAddrs></d:ProbeMatch>", "192.168.1.9")?.Name, "no scopes name");
+        False(found.Add("<d:ProbeMatch><d:XAddrs>http://192.168.1.111/onvif/device_service</d:XAddrs></d:ProbeMatch>", "192.168.1.111"), "duplicate host ignored");
+    }
+
+    static void False(bool value, string name) => Eq(false, value, name);
 
     static void MockCameraChecks()
     {

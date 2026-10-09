@@ -15,6 +15,7 @@ import android.view.inputmethod.EditorInfo
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.lifecycleScope
 import com.tillrecorder.agent.databinding.ActivityMainBinding
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +43,9 @@ class MainActivity : AppCompatActivity() {
 
     private var note: String? = null
     private var repairing = false
+    /** Ids of camera boxes the user typed in since they were last filled from the saved settings. */
+    private val editedCamera = mutableSetOf<Int>()
+    private var syncingCamera = false
 
     private val ticker = object : Runnable {
         override fun run() {
@@ -56,6 +60,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         store = SettingsStore(this)
         unlocked = savedInstanceState?.getBoolean(STATE_UNLOCKED) == true
+        savedInstanceState?.getIntArray(STATE_CAMERA_EDITED)?.let { editedCamera.addAll(it.toList()) }
         binding.registerName.setText(store.deviceName)
         binding.remindRestart.isChecked = store.remindAfterRestart
         binding.recordButton.setOnClickListener {
@@ -85,6 +90,7 @@ class MainActivity : AppCompatActivity() {
         binding.findCameras.setOnClickListener { findCameras() }
         binding.saveCamera.setOnClickListener { saveCamera(clear = false) }
         binding.clearCamera.setOnClickListener { saveCamera(clear = true) }
+        watchCameraEdits()
         binding.confirmPin.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_DONE) {
                 savePin()
@@ -99,6 +105,7 @@ class MainActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putBoolean(STATE_UNLOCKED, unlocked)
+        outState.putIntArray(STATE_CAMERA_EDITED, editedCamera.toIntArray())
     }
 
     override fun onRestart() {
@@ -319,19 +326,44 @@ class MainActivity : AppCompatActivity() {
             else -> getString(R.string.status_idle)
         }
         store.migrateOverheadCredentials()
-        if (!binding.cameraUrl.hasFocus() && binding.cameraUrl.text?.toString().orEmpty() != store.overheadUrl) {
-            binding.cameraUrl.setText(store.overheadUrl)
-        }
-        if (!binding.cameraUser.hasFocus() && binding.cameraUser.text?.toString().orEmpty() != store.overheadUser) {
-            binding.cameraUser.setText(store.overheadUser)
-        }
-        if (!binding.cameraPassword.hasFocus() && binding.cameraPassword.text?.toString().orEmpty() != store.overheadPassword) {
-            binding.cameraPassword.setText(store.overheadPassword)
-        }
+        // render() runs every 3 s. It only shows the saved camera in a box the user has not typed in since the
+        // last load/save; typed (unsaved) text is never replaced, focused or not.
+        showSavedCamera(force = false)
         binding.pendingText.text = when (pending) {
             0 -> getString(R.string.pending_clear)
             1 -> "1 clip is still on this tablet and will send when Cloudflare is reachable."
             else -> "$pending clips are still on this tablet and will send when Cloudflare is reachable."
+        }
+    }
+
+    /** Puts the saved camera into the boxes. Unless forced, a box with unsaved typing or focus is left alone. */
+    private fun showSavedCamera(force: Boolean) {
+        val fields = listOf(
+            binding.cameraUrl to store.overheadUrl,
+            binding.cameraUser to store.overheadUser,
+            binding.cameraPassword to store.overheadPassword,
+        )
+        syncingCamera = true
+        try {
+            for ((field, saved) in fields) {
+                val shown = field.text?.toString().orEmpty()
+                val replace = if (force) shown != saved else CameraFieldSync.shouldReplace(
+                    focused = field.hasFocus(),
+                    edited = field.id in editedCamera,
+                    shown = shown,
+                    saved = saved,
+                )
+                if (replace) field.setText(saved)
+            }
+        } finally {
+            syncingCamera = false
+        }
+        if (force) editedCamera.clear()
+    }
+
+    private fun watchCameraEdits() {
+        for (field in listOf(binding.cameraUrl, binding.cameraUser, binding.cameraPassword)) {
+            field.doAfterTextChanged { if (!syncingCamera) editedCamera.add(field.id) }
         }
     }
 
@@ -354,7 +386,7 @@ class MainActivity : AppCompatActivity() {
                     null,
                     com.google.android.material.R.attr.materialButtonOutlinedStyle
                 )
-                button.text = camera.host
+                button.text = if (camera.name.isBlank() || camera.name == "Camera") camera.host else "${camera.host}  ${camera.name}"
                 button.setOnClickListener {
                     binding.cameraUrl.setText(camera.service)
                     if (binding.cameraUser.text.isNullOrBlank()) binding.cameraStatus.setText(R.string.camera_need_login)
@@ -370,9 +402,7 @@ class MainActivity : AppCompatActivity() {
             store.overheadUrl = ""
             store.overheadUser = ""
             store.overheadPassword = ""
-            binding.cameraUrl.setText("")
-            binding.cameraUser.setText("")
-            binding.cameraPassword.setText("")
+            showSavedCamera(force = true)
             syncCamera(cleared = true)
             return
         }
@@ -381,15 +411,23 @@ class MainActivity : AppCompatActivity() {
         val password = binding.cameraPassword.text?.toString().orEmpty()
         val target = CameraAddress.resolve(address, user, password)
         if (target.kind == CameraAddress.Kind.INVALID) {
+            // Keep what was typed; only show why it was not saved.
             binding.cameraStatus.text = target.error
             return
         }
         binding.saveCamera.isEnabled = false
         binding.cameraStatus.setText(R.string.camera_checking)
         lifecycleScope.launch {
-            val outcome = withContext(Dispatchers.IO) { CameraSetup.check(target) }
+            val outcome = try {
+                withContext(Dispatchers.IO) { CameraSetup.check(target) }
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                CameraSetup.Outcome("", "Checking the camera failed (${error.javaClass.simpleName}).")
+            }
             val error = outcome.error
             if (error != null) {
+                // The typed address, username and password stay in their boxes.
                 binding.saveCamera.isEnabled = true
                 binding.cameraStatus.text = error
                 return@launch
@@ -397,9 +435,7 @@ class MainActivity : AppCompatActivity() {
             store.overheadUrl = outcome.url
             store.overheadUser = target.user
             store.overheadPassword = target.password
-            binding.cameraUrl.setText(outcome.url)
-            binding.cameraUser.setText(target.user)
-            if (!binding.cameraPassword.hasFocus()) binding.cameraPassword.setText(target.password)
+            showSavedCamera(force = true)
             syncCamera(cleared = false)
         }
     }
@@ -435,5 +471,6 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val STATE_UNLOCKED = "unlocked"
+        private const val STATE_CAMERA_EDITED = "camera_edited"
     }
 }

@@ -15,34 +15,129 @@ static class OnvifDiscovery
         "<e:Header><w:MessageID>uuid:" + Guid.NewGuid() + "</w:MessageID><w:To e:mustUnderstand=\"true\">urn:schemas-xmlsoap-org:ws:2005:04:discovery</w:To><w:Action e:mustUnderstand=\"true\">http://schemas.xmlsoap.org/ws/2005/04/discovery/Probe</w:Action></e:Header>" +
         "<e:Body><d:Probe><d:Types>dn:NetworkVideoTransmitter</d:Types></d:Probe></e:Body></e:Envelope>";
 
+    /// <summary>When the WS-Discovery probe is (re)sent, in ms from the start, and how long replies are collected.</summary>
+    static readonly long[] ProbeRounds = { 0, 800, 1800 };
+    const long ListenMs = 4000;
+
+    /// <summary>
+    /// WS-Discovery Probe to 239.255.255.250:3702, sent from every active IPv4 interface (three rounds, same MessageID),
+    /// collecting every ProbeMatch for four seconds. Multicast stays on each local subnet: cameras behind a router
+    /// on another subnet do not hear it, and are added by typing their IP address.
+    /// </summary>
     public static List<(string Name, string Host, string Url)> Probe()
     {
-        var found = new List<(string Name, string Host, string Url)>();
+        var found = new DiscoveryResults();
+        var sockets = new List<System.Net.Sockets.UdpClient>();
         try
         {
-            using var udp = new System.Net.Sockets.UdpClient();
-            udp.Client.ReceiveTimeout = 1500;
-            var bytes = Encoding.UTF8.GetBytes(ProbeMessage());
-            udp.Send(bytes, bytes.Length, "239.255.255.250", 3702);
-            var until = DateTime.UtcNow.AddSeconds(3);
-            while (DateTime.UtcNow < until)
+            foreach (var local in MulticastAddresses())
             {
                 try
                 {
-                    var remote = new IPEndPoint(IPAddress.Any, 0);
-                    var data = udp.Receive(ref remote);
-                    var camera = CameraFromReply(Encoding.UTF8.GetString(data), remote.Address.ToString());
-                    if (camera != null && found.All(item => item.Host != camera.Value.Host)) found.Add(camera.Value);
+                    var udp = new System.Net.Sockets.UdpClient(new IPEndPoint(local, 0));
+                    udp.Client.SetSocketOption(System.Net.Sockets.SocketOptionLevel.IP, System.Net.Sockets.SocketOptionName.MulticastInterface, local.GetAddressBytes());
+                    sockets.Add(udp);
                 }
-                catch { break; }
+                catch (Exception error)
+                {
+                    AppLog.Write("onvif bind " + error.GetType().Name);
+                }
             }
+            if (sockets.Count == 0) sockets.Add(new System.Net.Sockets.UdpClient());
+            var bytes = Encoding.UTF8.GetBytes(ProbeMessage());
+            var group = new IPEndPoint(IPAddress.Parse("239.255.255.250"), 3702);
+            var started = Environment.TickCount64;
+            var round = 0;
+            while (Environment.TickCount64 - started < ListenMs)
+            {
+                if (round < ProbeRounds.Length && Environment.TickCount64 - started >= ProbeRounds[round])
+                {
+                    foreach (var udp in sockets)
+                    {
+                        try { udp.Send(bytes, bytes.Length, group); }
+                        catch (Exception error) { AppLog.Write("onvif send " + error.GetType().Name); }
+                    }
+                    round++;
+                }
+                var idle = true;
+                foreach (var udp in sockets)
+                {
+                    try
+                    {
+                        while (udp.Available > 0)
+                        {
+                            idle = false;
+                            var remote = new IPEndPoint(IPAddress.Any, 0);
+                            var data = udp.Receive(ref remote);
+                            found.Add(Encoding.UTF8.GetString(data), remote.Address.ToString());
+                        }
+                    }
+                    catch (Exception error)
+                    {
+                        AppLog.Write("onvif receive " + error.GetType().Name);
+                    }
+                }
+                if (idle) Thread.Sleep(40);
+            }
+            AppLog.Write($"onvif probe interfaces {sockets.Count} cameras {found.Cameras.Count}");
         }
         catch (Exception error)
         {
             AppLog.Write("onvif " + error.GetType().Name);
         }
-        return found;
+        finally
+        {
+            foreach (var udp in sockets) udp.Dispose();
+        }
+        return found.Cameras;
     }
+
+    /// <summary>IPv4 addresses of interfaces that are up and can multicast (no loopback, no 169.254 link-local).</summary>
+    public static List<IPAddress> MulticastAddresses()
+    {
+        var result = new List<IPAddress>();
+        try
+        {
+            foreach (var nic in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+            {
+                if (nic.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up) continue;
+                if (nic.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback) continue;
+                if (!nic.SupportsMulticast) continue;
+                foreach (var unicast in nic.GetIPProperties().UnicastAddresses)
+                {
+                    var address = unicast.Address;
+                    if (address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) continue;
+                    var b = address.GetAddressBytes();
+                    if (b[0] == 127 || (b[0] == 169 && b[1] == 254)) continue;
+                    if (!result.Contains(address)) result.Add(address);
+                }
+            }
+        }
+        catch (Exception error)
+        {
+            AppLog.Write("onvif interfaces " + error.GetType().Name);
+        }
+        return result;
+    }
+
+    /// <summary>Model (or name) from the ONVIF scopes in a ProbeMatch, e.g. onvif://www.onvif.org/hardware/IPC-HDW1230S.</summary>
+    public static string ModelFromReply(string text)
+    {
+        var scopes = Regex.Match(text ?? "", @"Scopes[^>]*>([^<]+)<").Groups[1].Value
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        string Scope(string kind)
+        {
+            var prefix = "onvif://www.onvif.org/" + kind + "/";
+            var hit = scopes.FirstOrDefault(s => s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+            return hit == null ? "" : Uri.UnescapeDataString(hit[prefix.Length..]).Replace('_', ' ').Trim();
+        }
+        var hardware = Scope("hardware");
+        var name = Scope("name");
+        if (hardware.Length > 0 && name.Length > 0 && !name.Equals(hardware, StringComparison.OrdinalIgnoreCase))
+            return name + " " + hardware;
+        return hardware.Length > 0 ? hardware : name;
+    }
+
 
     /// <summary>Picks the IPv4 http XAddr from a ProbeMatch (XAddrs is a space separated list that may start with IPv6).</summary>
     public static (string Name, string Host, string Url)? CameraFromReply(string text, string sender)
@@ -59,7 +154,9 @@ static class OnvifDiscovery
             chosen = "http://" + sender + CameraAddress.OnvifPath;
         }
         var host = CameraAddress.Parse(chosen)?.Host;
-        return host == null ? null : ("Camera", host, chosen);
+        if (host == null) return null;
+        var model = ModelFromReply(text);
+        return (model.Length > 0 ? model : "Camera", host, chosen);
     }
 
     static bool IsIpv4(string host) => Regex.IsMatch(host, @"^\d{1,3}(\.\d{1,3}){3}$");
@@ -254,6 +351,40 @@ static class OnvifDiscovery
         {
             throw new CameraException(CameraFailure.Unreachable, $"Could not reach the camera's ONVIF service at {where}.");
         }
+    }
+}
+
+/// <summary>
+/// Every camera that answered the probe, once each, keyed by the device's own address (its XAddr host).
+/// Repeated probes and replies on several interfaces collapse; different cameras never do, even when cloned
+/// firmware reports the same WS-Discovery endpoint id.
+/// </summary>
+sealed class DiscoveryResults
+{
+    readonly HashSet<string> keys = new(StringComparer.OrdinalIgnoreCase);
+    public List<(string Name, string Host, string Url)> Cameras { get; } = new();
+
+    public bool Add(string reply, string sender)
+    {
+        var camera = OnvifDiscovery.CameraFromReply(reply, sender);
+        if (camera == null) return false;
+        if (!keys.Add(camera.Value.Host)) return false;
+        Cameras.Add(camera.Value);
+        Cameras.Sort((a, b) => CompareHosts(a.Host, b.Host));
+        return true;
+    }
+
+    static int CompareHosts(string a, string b)
+    {
+        if (IPAddress.TryParse(a, out var x) && IPAddress.TryParse(b, out var y))
+        {
+            var xb = x.GetAddressBytes();
+            var yb = y.GetAddressBytes();
+            if (xb.Length == yb.Length)
+                for (var i = 0; i < xb.Length; i++)
+                    if (xb[i] != yb[i]) return xb[i].CompareTo(yb[i]);
+        }
+        return string.CompareOrdinal(a, b);
     }
 }
 

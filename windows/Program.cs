@@ -446,32 +446,54 @@ sealed class CameraForm : Form
         var clear = new Button { Text = "Clear", Location = new Point(236, 234), Width = 80 };
         var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(322, 234), Width = 80 };
         CancelButton = cancel;
-        found.SelectedIndexChanged += (_, _) =>
+        // Only a deliberate pick (click on an item, or Enter/Space on the list) fills the address box.
+        // SelectedIndexChanged also fires when the list is refilled or when a click lands below the last item,
+        // and must never replace what was typed.
+        found.MouseClick += (_, e) =>
         {
-            if (found.SelectedIndex >= 0 && found.SelectedIndex < addresses.Count)
-                urlBox.Text = addresses[found.SelectedIndex];
+            var index = found.IndexFromPoint(e.Location);
+            if (index != ListBox.NoMatches) Pick(index);
+        };
+        found.KeyDown += (_, e) =>
+        {
+            if (e.KeyCode is Keys.Enter or Keys.Space && found.SelectedIndex >= 0)
+            {
+                Pick(found.SelectedIndex);
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
         };
         find.Click += (_, _) =>
         {
             find.Enabled = false;
-            status.Text = "Looking for cameras on this network. Enter the username and password before you save.";
+            status.Text = "Looking for cameras on this network for a few seconds. Enter the username and password before you save.";
             found.Items.Clear();
             addresses.Clear();
             Task.Run(() =>
             {
-                var cameras = OnvifDiscovery.Probe();
-                BeginInvoke(() =>
+                List<(string Name, string Host, string Url)> cameras;
+                try { cameras = OnvifDiscovery.Probe(); }
+                catch { cameras = new(); }
+                if (IsDisposed || Disposing) return;
+                try
                 {
-                    find.Enabled = true;
-                    foreach (var camera in cameras)
+                    BeginInvoke(() =>
                     {
-                        found.Items.Add(camera.Host);
-                        addresses.Add(camera.Url);
-                    }
-                    status.Text = cameras.Count == 0
-                        ? "No camera answered. Paste the RTSP or ONVIF address instead."
-                        : "Pick a camera, enter its username and password, then save.";
-                });
+                        find.Enabled = true;
+                        foreach (var camera in cameras)
+                        {
+                            found.Items.Add(camera.Name is "" or "Camera" ? camera.Host : camera.Host + "   " + camera.Name);
+                            addresses.Add(camera.Url);
+                        }
+                        status.Text = cameras.Count switch
+                        {
+                            0 => "No camera answered. Type the camera's IP address (or its RTSP or ONVIF address) instead.",
+                            1 => "Found 1 camera. Click it, enter its username and password, then save. Cameras on another subnet do not answer; type their IP address.",
+                            _ => $"Found {cameras.Count} cameras. Click one, enter its username and password, then save."
+                        };
+                    });
+                }
+                catch (InvalidOperationException) { }
             });
         };
         save.Click += (_, _) =>
@@ -494,9 +516,16 @@ sealed class CameraForm : Form
             status.Text = "Checking the camera...";
             Task.Run(() =>
             {
-                var (bare, problem) = CameraSetup.Check(target);
+                string bare;
+                string? problem;
+                try { (bare, problem) = CameraSetup.Check(target); }
+                catch (Exception error) { (bare, problem) = ("", $"Checking the camera failed ({error.GetType().Name})."); }
+                if (IsDisposed || Disposing) return;
+                try
+                {
                 BeginInvoke(() =>
                 {
+                    // The address, username and password boxes are left exactly as typed; only the status changes.
                     save.Enabled = true;
                     if (problem != null || string.IsNullOrWhiteSpace(bare))
                     {
@@ -509,6 +538,8 @@ sealed class CameraForm : Form
                     DialogResult = DialogResult.OK;
                     Close();
                 });
+                }
+                catch (InvalidOperationException) { }
             });
         };
         clear.Click += (_, _) =>
@@ -520,5 +551,13 @@ sealed class CameraForm : Form
             Close();
         };
         Controls.AddRange(new Control[] { intro, urlLabel, urlBox, userLabel, userBox, passwordLabel, passwordBox, find, save, clear, cancel, found, status });
+    }
+
+    void Pick(int index)
+    {
+        if (index < 0 || index >= addresses.Count) return;
+        urlBox.Text = addresses[index];
+        if (userBox.Text.Trim().Length == 0)
+            status.Text = "Enter the camera's username and password, then save.";
     }
 }

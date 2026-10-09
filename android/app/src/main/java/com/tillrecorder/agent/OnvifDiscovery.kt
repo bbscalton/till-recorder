@@ -7,7 +7,11 @@ import java.net.ConnectException
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.HttpURLConnection
+import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.MulticastSocket
+import java.net.NetworkInterface
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
@@ -39,46 +43,121 @@ object OnvifDiscovery {
         <e:Body><d:Probe><d:Types>dn:NetworkVideoTransmitter</d:Types></d:Probe></e:Body></e:Envelope>
     """.trimIndent().toByteArray(Charsets.UTF_8)
 
+    /** When the probe is (re)sent, in ms from the start, and how long replies are collected. */
+    private val PROBE_ROUNDS = longArrayOf(0, 800, 1_800)
+    private const val LISTEN_MS = 4_000L
+
+    /**
+     * WS-Discovery Probe to 239.255.255.250:3702 from every active IPv4 interface (three rounds, same MessageID),
+     * collecting every ProbeMatch for four seconds. Multicast stays on the local subnet: cameras behind a router
+     * on another subnet do not hear it and are added by typing their IP address.
+     */
     fun probe(context: Context): List<Camera> {
         val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
         val lock = wifi?.createMulticastLock("till-onvif")
         lock?.setReferenceCounted(false)
         lock?.acquire()
-        val found = LinkedHashMap<String, Camera>()
+        val found = Found()
+        val sockets = mutableListOf<DatagramSocket>()
         try {
-            DatagramSocket().use { socket ->
-                socket.soTimeout = 500
-                val probe = probeMessage()
-                val group = InetAddress.getByName("239.255.255.250")
-                socket.send(DatagramPacket(probe, probe.size, group, 3702))
-                val until = System.currentTimeMillis() + 3_000
-                val buffer = ByteArray(16384)
-                var resent = false
-                while (System.currentTimeMillis() < until) {
-                    try {
-                        val packet = DatagramPacket(buffer, buffer.size)
-                        socket.receive(packet)
-                        val text = String(packet.data, packet.offset, packet.length, Charsets.UTF_8)
-                        val camera = cameraFromReply(text, packet.address?.hostAddress.orEmpty()) ?: continue
-                        if (!found.containsKey(camera.host)) found[camera.host] = camera
-                    } catch (_: SocketTimeoutException) {
-                        if (!resent) {
-                            resent = true
-                            try { socket.send(DatagramPacket(probe, probe.size, group, 3702)) } catch (_: Exception) {}
+            for ((nic, address) in multicastAddresses()) {
+                try {
+                    val socket = MulticastSocket(InetSocketAddress(address, 0))
+                    socket.networkInterface = nic
+                    sockets.add(socket)
+                } catch (_: Exception) {
+                }
+            }
+            if (sockets.isEmpty()) sockets.add(DatagramSocket())
+            sockets.forEach { it.soTimeout = 40 }
+            val probe = probeMessage()
+            val group = InetAddress.getByName("239.255.255.250")
+            val started = System.currentTimeMillis()
+            val buffer = ByteArray(16384)
+            var round = 0
+            while (System.currentTimeMillis() - started < LISTEN_MS) {
+                if (round < PROBE_ROUNDS.size && System.currentTimeMillis() - started >= PROBE_ROUNDS[round]) {
+                    for (socket in sockets) {
+                        try { socket.send(DatagramPacket(probe, probe.size, group, 3702)) } catch (_: Exception) {}
+                    }
+                    round++
+                }
+                for (socket in sockets) {
+                    while (true) {
+                        try {
+                            val packet = DatagramPacket(buffer, buffer.size)
+                            socket.receive(packet)
+                            found.add(String(packet.data, packet.offset, packet.length, Charsets.UTF_8), packet.address?.hostAddress.orEmpty())
+                        } catch (_: SocketTimeoutException) {
+                            break
+                        } catch (_: Exception) {
+                            break
                         }
-                    } catch (_: Exception) {
-                        break
                     }
                 }
             }
         } catch (_: Exception) {
         } finally {
+            sockets.forEach { try { it.close() } catch (_: Exception) {} }
             try {
                 lock?.release()
             } catch (_: Exception) {
             }
         }
-        return found.values.toList()
+        return found.cameras
+    }
+
+    private fun multicastAddresses(): List<Pair<NetworkInterface, InetAddress>> {
+        val result = mutableListOf<Pair<NetworkInterface, InetAddress>>()
+        try {
+            for (nic in NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()) {
+                if (!nic.isUp || nic.isLoopback || !nic.supportsMulticast()) continue
+                for (address in nic.inetAddresses.toList()) {
+                    if (address !is Inet4Address || address.isLoopbackAddress || address.isLinkLocalAddress) continue
+                    result.add(nic to address)
+                }
+            }
+        } catch (_: Exception) {
+        }
+        return result
+    }
+
+    /** Every camera that answered, once each, keyed by the device's own address (its XAddr host), sorted by IP. */
+    class Found {
+        private val byHost = LinkedHashMap<String, Camera>()
+        val cameras: List<Camera> get() = byHost.values.sortedWith(compareBy({ hostKey(it.host) }, { it.host }))
+
+        fun add(reply: String, sender: String): Boolean {
+            val camera = cameraFromReply(reply, sender) ?: return false
+            if (byHost.containsKey(camera.host)) return false
+            byHost[camera.host] = camera
+            return true
+        }
+
+        private fun hostKey(host: String): Long {
+            val parts = host.split('.')
+            if (parts.size != 4) return Long.MAX_VALUE
+            return parts.fold(0L) { acc, part -> acc * 256 + (part.toIntOrNull() ?: return Long.MAX_VALUE) }
+        }
+    }
+
+    /** Model (or name) from the ONVIF scopes in a ProbeMatch, e.g. onvif://www.onvif.org/hardware/IPC-HDW1230S. */
+    fun modelFromReply(text: String): String {
+        val scopes = Regex("Scopes[^>]*>([^<]+)<").find(text)?.groupValues?.getOrNull(1).orEmpty()
+            .split(Regex("\\s+")).filter { it.isNotEmpty() }
+        fun scope(kind: String): String {
+            val prefix = "onvif://www.onvif.org/$kind/"
+            val hit = scopes.firstOrNull { it.startsWith(prefix, true) } ?: return ""
+            return try {
+                java.net.URLDecoder.decode(hit.substring(prefix.length).replace("+", "%2B"), "UTF-8")
+            } catch (_: Exception) {
+                hit.substring(prefix.length)
+            }.replace('_', ' ').trim()
+        }
+        val hardware = scope("hardware")
+        val name = scope("name")
+        if (hardware.isNotEmpty() && name.isNotEmpty() && !name.equals(hardware, true)) return "$name $hardware"
+        return hardware.ifEmpty { name }
     }
 
     /** Picks the IPv4 http XAddr from a ProbeMatch (XAddrs is a space separated list that may start with IPv6). */
@@ -90,7 +169,7 @@ object OnvifDiscovery {
         val chosen = ipv4 ?: xaddrs.firstOrNull { CameraAddress.parse(it)?.host == sender }
         val service = chosen ?: if (isIpv4(sender)) "http://$sender${CameraAddress.ONVIF_PATH}" else return null
         val host = CameraAddress.parse(service)?.host ?: return null
-        return Camera("Camera", host, service)
+        return Camera(modelFromReply(text).ifEmpty { "Camera" }, host, service)
     }
 
     private fun isIpv4(host: String) = Regex("^\\d{1,3}(\\.\\d{1,3}){3}$").matches(host)
