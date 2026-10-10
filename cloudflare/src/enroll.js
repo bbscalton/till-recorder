@@ -182,7 +182,7 @@ export function enrollLanding(request, key) {
   const origin = new URL(request.url).origin;
   const valid = ENROLL_KEY.test(key);
   const deep = `unrulypos://enroll?key=${valid ? key : ""}&server=${encodeURIComponent(origin)}`;
-  const apk = "https://github.com/bbscalton/till-recorder/releases/download/unruly-pos-2.0.11/UnrulyPOS-2.0.11.apk";
+  const apk = "https://github.com/bbscalton/till-recorder/releases/download/unruly-pos-2.0.12/UnrulyPOS-2.0.12.apk";
   const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>Add this till</title>
 <body style="font-family:system-ui,sans-serif;max-width:30rem;margin:2rem auto;padding:0 1rem">
