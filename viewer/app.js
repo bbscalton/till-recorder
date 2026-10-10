@@ -331,6 +331,49 @@ document.getElementById("pairButton").addEventListener("click", async () => {
   }
 });
 
+document.getElementById("enrollButton").addEventListener("click", () => {
+  const box = document.getElementById("enrollBox");
+  box.hidden = !box.hidden;
+});
+
+document.getElementById("enrollForm").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const status = document.getElementById("enrollStatus");
+  const link = document.getElementById("enrollLink");
+  const qr = document.getElementById("enrollQr");
+  qr.hidden = true;
+  link.textContent = "";
+  status.textContent = "Creating…";
+  try {
+    const generate = document.getElementById("enrollGen").checked;
+    const pin = document.getElementById("enrollPin").value.trim();
+    const created = await api("/api/enroll-keys", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: document.getElementById("enrollName").value,
+        camera: document.getElementById("enrollCamera").value,
+        pin: generate ? "" : pin,
+        generate_pin: generate,
+        expires_hours: Number(document.getElementById("enrollHours").value),
+      }),
+    });
+    link.textContent = created.link;
+    try {
+      const code = window.qrcode(0, "M");
+      code.addData(created.link);
+      code.make();
+      qr.src = code.createDataURL(5);
+      qr.hidden = false;
+    } catch (ignored) { /* link text is still shown */ }
+    status.textContent = `One-time link for ${created.name} (${created.camera} camera). ` +
+      (created.master_pin ? `PIN: ${created.master_pin} (shown once, write it down). ` : "No PIN preset. ") +
+      "Open it on the tablet; it works once.";
+  } catch (error) {
+    status.textContent = error.message === "auth" ? "Sign in again, then try." : "Could not create the link. Check the name and PIN.";
+  }
+});
+
 dayInput.addEventListener("change", () => loadDay());
 document.getElementById("playDay").addEventListener("click", () => {
   if (segments[0]) playAt(segments[0].startedAtMs + 50);

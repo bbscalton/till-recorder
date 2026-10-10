@@ -15,6 +15,7 @@ import {
   startGoogle,
   userOwnsActiveDevice,
 } from "./accounts.js";
+import { createEnrollKey, enrollLanding, readEnrollKey, redeemEnrollKey } from "./enroll.js";
 
 const DEVICE_ID = /^[A-Za-z0-9_-]{8,64}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
@@ -34,6 +35,9 @@ export default {
     if (url.pathname === "/auth/google") return startGoogle(request, env);
     if (url.pathname === "/auth/google/callback") return finishGoogle(request, env);
     if (url.pathname === "/auth/logout") return logout();
+    if (request.method === "GET" && url.pathname.startsWith("/e/")) {
+      return enrollLanding(request, url.pathname.slice(3));
+    }
     if (url.pathname.startsWith("/api/")) {
       return handleApi(request, env, url, ctx);
     }
@@ -106,6 +110,8 @@ export class LiveRelay {
   }
 }
 
+const enrollDeps = { json, canWatch, DEVICE_ID, writeStatus };
+
 const PAIR_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 
 function tillRoute(request, url) {
@@ -140,6 +146,7 @@ async function enforceOwnership(request, env, url, who) {
   if (!who || who.role === "admin") return null;
   if (url.pathname === "/api/devices" || url.pathname === "/api/pair-codes") return null;
   if (url.pathname.startsWith("/api/pair-codes/")) return null;
+  if (url.pathname === "/api/enroll-keys" || url.pathname.startsWith("/api/enroll-keys/")) return null;
   if (url.pathname.startsWith("/api/media/")) return null;
   if (url.pathname === "/api/search" && !url.searchParams.get("device_id")) return null;
   let deviceId = url.searchParams.get("device_id") || deviceIdFromPath(url);
@@ -154,6 +161,7 @@ async function enforceOwnership(request, env, url, who) {
 
 async function handleApi(request, env, url, ctx) {
   if (request.method === "POST" && url.pathname === "/api/pair") return claimPair(request, env);
+  if (request.method === "POST" && url.pathname === "/api/enroll") return redeemEnrollKey(request, env, enrollDeps);
   if (request.method === "GET" && url.pathname === "/api/auth/config") {
     return json({
       google: googleReady(env),
@@ -190,6 +198,10 @@ async function handleApi(request, env, url, ctx) {
   } else {
     const denied = await enforceOwnership(request, env, url, who);
     if (denied) return denied;
+  }
+  if (request.method === "POST" && url.pathname === "/api/enroll-keys") return createEnrollKey(request, env, who, enrollDeps);
+  if (request.method === "GET" && url.pathname.startsWith("/api/enroll-keys/")) {
+    return readEnrollKey(env, decodeURIComponent(url.pathname.slice("/api/enroll-keys/".length)), who, enrollDeps);
   }
   if (request.method === "POST" && url.pathname === "/api/pair-codes") return createPairCode(env, who);
   if (request.method === "GET" && url.pathname.startsWith("/api/pair-codes/")) {
