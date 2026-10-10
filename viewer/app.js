@@ -341,20 +341,20 @@ document.getElementById("enrollForm").addEventListener("submit", async (event) =
   const status = document.getElementById("enrollStatus");
   const link = document.getElementById("enrollLink");
   const qr = document.getElementById("enrollQr");
+  const pinShow = document.getElementById("enrollPinShow");
   qr.hidden = true;
+  pinShow.hidden = true;
+  pinShow.textContent = "";
   link.textContent = "";
-  status.textContent = "Creating…";
+  status.textContent = "Creating...";
   try {
-    const generate = document.getElementById("enrollGen").checked;
-    const pin = document.getElementById("enrollPin").value.trim();
+    // 2.0.10 Add register: one link/QR carries the till name and a generated PIN (never typed by the installer).
     const created = await api("/api/enroll-keys", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name: document.getElementById("enrollName").value,
-        camera: document.getElementById("enrollCamera").value,
-        pin: generate ? "" : pin,
-        generate_pin: generate,
+        generate_pin: true,
         expires_hours: Number(document.getElementById("enrollHours").value),
       }),
     });
@@ -366,11 +366,15 @@ document.getElementById("enrollForm").addEventListener("submit", async (event) =
       qr.src = code.createDataURL(5);
       qr.hidden = false;
     } catch (ignored) { /* link text is still shown */ }
-    status.textContent = `One-time link for ${created.name} (${created.camera} camera). ` +
-      (created.master_pin ? `PIN: ${created.master_pin} (shown once, write it down). ` : "No PIN preset. ") +
-      "Open it on the tablet; it works once.";
+    if (created.master_pin) {
+      pinShow.textContent = `PIN ${created.master_pin}`;
+      pinShow.hidden = false;
+    }
+    status.textContent = `Setup link for ${created.name}. ` +
+      (created.master_pin ? "Write the PIN down now: it is shown once here. " : "") +
+      "Open the link (or scan the QR) on the till: it pairs by itself, shows the PIN once, then asks for it once to activate. The link works once.";
   } catch (error) {
-    status.textContent = error.message === "auth" ? "Sign in again, then try." : "Could not create the link. Check the name and PIN.";
+    status.textContent = error.message === "auth" ? "Sign in again, then try." : "Could not create the setup link. Check the till name.";
   }
 });
 
@@ -655,6 +659,21 @@ function renderDevices() {
       recordLabel.className = "record-state";
       button.querySelector(".tile-meta").append(recordLabel);
     }
+    // 2.0.10: Connected (fresh heartbeat) and the Accessibility flag. Missing field = unknown, never shown as off.
+    let conn = button.querySelector(".conn-state");
+    if (!conn) {
+      conn = document.createElement("span");
+      conn.className = "conn-state";
+      button.querySelector(".tile-meta").append(conn);
+    }
+    const accOff = device.accessibilityEnabled === false;
+    const connText = accOff
+      ? (online ? "Accessibility OFF - screen not being watched. Turn it back on at the till." : "Accessibility was OFF at last check")
+      : (online ? "Connected" : "");
+    if (conn.textContent !== connText) conn.textContent = connText;
+    conn.hidden = !connText;
+    conn.classList.toggle("bad", accOff);
+    button.classList.toggle("acc-off", accOff);
     const recording = device.record !== false && Boolean(device.recording);
     const recordText = recording ? "Recording" : "Not recording";
     if (recordLabel.textContent !== recordText) recordLabel.textContent = recordText;

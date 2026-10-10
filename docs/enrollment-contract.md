@@ -27,3 +27,17 @@ POST /api/enroll-keys {name, camera:"front"|"back", pin?:"6 digits" | generate_p
  -> {ok,key,link,deep_link,name,camera,expires,has_pin,master_pin?}
 GET /api/enroll-keys/<key> -> {used,expired,name,camera}
 Storage: R2 `enroll/<key>.json`, `enroll-tries/<ip>.json` (new prefixes only).
+
+## 2.0.10 additions (deployed 2026-10-10, Worker a1173dfe)
+Add register (Watch "Add register" button): name only. POST /api/enroll-keys {name, generate_pin:true, expires_hours} (camera now OPTIONAL: "" = app default front; "front"/"back" still accepted).
+ -> {ok,key,link,deep_link,name,camera,expires,has_pin:true,master_pin}. The link /e/<key> and its QR are the ONE setup link; name and PIN are bound to the key on the server (never in the URL).
+ PIN rules unchanged: 6 digits, no repeats, no simple runs (random per till). master_pin is shown to the owner once, in this response only.
+ At rest the PIN is sealed (AES-GCM; key = SHA-256 of a fixed label + the Worker secret) in enroll/<key>.json as pinEnc, pin:"" ; legacy plain `pin` records still redeem.
+ POST /api/enroll returns it once as master_pin, then the record is rewritten without pin/pinEnc (used:true). Expiry 1..168 h (default 24). Existing devices are never touched (409 for a registered device id).
+App (Android 2.0.10): opening the link pairs with no typing, pulls till name + PIN, shows the PIN once, the PIN is then entered once to activate (2.0.9 gate), then one approvals step.
+ It re-checks Accessibility on every resume (blocking "Turn Accessibility back on" prompt while watching is enabled), raises a loud ongoing notification after boot / app update when it is off,
+ and sends `accessibility_enabled` (boolean) in POST /api/heartbeat.
+Heartbeat: optional "accessibility_enabled": true|false. Stored on status/<id>.json as accessibilityEnabled + accessibilityAt (ms). A non-boolean value is ignored. Absent = unknown: older apps (Android <= 2.0.9, Windows) keep their record unchanged.
+GET /api/devices: each device includes accessibilityEnabled only when known (true/false); the field is omitted when unknown.
+Watch tile: "Connected" when the heartbeat is fresh (online < 90 s); a red "Accessibility OFF" banner and red outline when accessibilityEnabled === false; nothing is shown for unknown.
+Known limits: a till that has not redeemed its link yet does not appear on the wall (no pending-device list). The last known accessibility value stays until the next 2.0.10 heartbeat.

@@ -370,6 +370,10 @@ async function heartbeat(request, env) {
     name,
     recording: Boolean(body.recording),
     lastSeen: Date.now(),
+    // 2.0.10: only when the app reports it. Older apps omit it and keep whatever was stored (unknown stays unknown).
+    ...(typeof body.accessibility_enabled === "boolean"
+      ? { accessibilityEnabled: body.accessibility_enabled, accessibilityAt: Date.now() }
+      : {}),
   });
   const control = await readControl(env, body.device_id);
   const allowed = await recordingAllowed(env, body.device_id);
@@ -877,6 +881,7 @@ async function listDevices(env, who) {
     if (who && who.role !== "admin" && device.ownerUserId !== who.user.id) continue;
     const seen = Number(device.lastSeen || 0);
     device.online = Date.now() - seen < 90_000;
+    if (typeof device.accessibilityEnabled !== "boolean") delete device.accessibilityEnabled; // unknown, never "off"
     device.recording = Boolean(device.recording) && device.online;
     if (DEVICE_ID.test(device.id || "")) {
       const control = await readControl(env, device.id);

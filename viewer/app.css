@@ -94,3 +94,6 @@ input, select { width: 100%; padding: 8px 10px; background: #0e1014; border: 1px
   .moments, .lower { display: grid; grid-template-columns: 1fr; }
   .clock { margin-left: 0; }
 }
+.conn-state { flex-basis: 100%; font-size: 12px; font-weight: 650; color: var(--live); }
+.conn-state.bad { color: #fff; background: #c62828; padding: 4px 8px; border-radius: 6px; font-size: 13px; }
+.tile.acc-off { outline: 2px solid #c62828; }

@@ -1,0 +1,2 @@
+{ "name":"r2dump-local","main":"w.js","compatibility_date":"2026-08-01","account_id":"2aba2de5418ac0812383b628b6cb0f77",
+  "r2_buckets":[{"binding":"R","bucket_name":"till-recorder","remote":true}] }

@@ -39,7 +39,7 @@
         <label class="day-label" for="day">Day</label>
         <input id="day" type="date">
         <button id="pairButton" type="button">Pair a register</button>
-        <button id="enrollButton" type="button">Create till</button>
+        <button id="enrollButton" type="button">Add register</button>
       </div>
     </header>
     <div id="pairBox" class="pair-box" hidden>
@@ -49,13 +49,11 @@
     <div id="enrollBox" class="pair-box" hidden>
       <form id="enrollForm">
         <input id="enrollName" placeholder="Till name" maxlength="80" required>
-        <select id="enrollCamera"><option value="front">Front camera</option><option value="back">Back camera</option></select>
-        <input id="enrollPin" placeholder="PIN (6 digits, blank = none)" inputmode="numeric" maxlength="6">
-        <label><input id="enrollGen" type="checkbox"> Generate PIN</label>
-        <select id="enrollHours"><option value="24">Expires in 24 hours</option><option value="72">3 days</option><option value="168">7 days</option></select>
-        <button type="submit">Create install link</button>
+        <select id="enrollHours"><option value="24">Link expires in 24 hours</option><option value="72">3 days</option><option value="168">7 days</option></select>
+        <button type="submit">Create setup link</button>
       </form>
       <p id="enrollStatus" class="hint"></p>
+      <p id="enrollPinShow" class="pair-code" hidden></p>
       <p id="enrollLink" class="hint"></p>
       <img id="enrollQr" alt="" hidden>
     </div>
