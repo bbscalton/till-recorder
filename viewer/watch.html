@@ -50,6 +50,12 @@
       <p id="daySize" class="hint wall-note">Pick a register to see the screen, camera, and what was typed together.</p>
     </section>
     <section id="detailView" hidden>
+      <div class="actions" id="pinPush">
+        <button id="pinGenerate" type="button">Generate PIN</button>
+        <output id="pinValue" aria-live="polite"></output>
+        <button id="pinSend" type="button" disabled title="Push is for Unruly POS only; Till Recorder just logs in with the PIN">Push to POS</button>
+      </div>
+      <p id="pinHint" class="hint">Generate PIN, then type it into the app's till name/PIN fields for first-time setup. Push to POS is only for an already-installed Unruly device whose PIN was forgotten.</p>
       <div class="detail-bar">
         <button id="backWall" type="button">All registers</button>
         <h1 id="detailName">Register</h1>
@@ -65,12 +71,6 @@
         <button id="removeDevice" type="button">Remove device</button>
       </div>
       <p id="lockHint" class="hint">Locks this register until the owner PIN is entered on the tablet.</p>
-      <div class="actions" id="pinPush">
-        <button id="pinGenerate" type="button">Generate PIN</button>
-        <output id="pinValue" aria-live="polite"></output>
-        <button id="pinSend" type="button" disabled>Push to POS</button>
-      </div>
-      <p id="pinHint" class="hint">Generate a 6-digit master PIN, then push it to this register. The Unruly POS 2.0.0 app shows it once so you can write it down. If it is lost, generate and push a new one.</p>
       <p id="launcherHint" class="hint">Shows the Till Recorder icon on this register for 15 minutes. Hiding the icon does not stop uninstall from Settings.</p>
       <div class="moments">
         <article class="pane">
@@ -129,6 +129,6 @@
     </section>
   </section>
   <script src="config.js"></script>
-  <script src="app.js?v=1515"></script>
+  <script src="app.js?v=1516"></script>
 </body>
 </html>

@@ -253,7 +253,7 @@ if (pinGenerate && pinSend) {
     generatedFor = selectedId;
     pinValue.textContent = generatedPin;
     pinSend.disabled = false;
-    pinHint.textContent = "Write this PIN down, then press Push to POS. It is not saved on this page.";
+    pinHint.textContent = "Write this PIN down. It is not saved on this page. Type it into the app's till name/PIN fields for first-time setup. Push to POS is only for an already-installed Unruly device whose PIN was forgotten.";
   });
   pinSend.addEventListener("click", async () => {
     if (!selectedId || !generatedPin || pinSend.disabled) return;
